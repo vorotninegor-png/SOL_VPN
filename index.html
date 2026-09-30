@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>SOL VPN App</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Ubuntu:wght@400;500;700&display=swap" rel="stylesheet">
+    
+    <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
+    
+    <link rel="stylesheet" href="style.css?v=5001">
+
+    <style>
+        /* 🚨 МАКСИМАЛЬНЫЙ ПРИОРИТЕТ ДЛЯ ХИТБОКСОВ СЛОЕВ ВЕРСТКИ 🚨 */
+        .hitbox-overlay {
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100% !important;
+            height: 100% !important;
+            z-index: 0 !important;
+            background: transparent !important;
+            cursor: pointer !important;
+            pointer-events: none !important;
+        }
+
+        .screen {
+            pointer-events: none !important;
+        }
+
+        .screen.active {
+            pointer-events: auto !important;
+        }
+
+        .action-card, 
+        .tariff-card, 
+        .faq-btn, 
+        .liquid-reveal-btn, 
+        .apply-promo-btn, 
+        .close-promo-btn, 
+        .power-button, 
+        .action-btn,
+        .admin-type-btn,
+        .calc-step-btn,
+        .t-sketch-btn,
+        .admin-action-submit,
+        .nav-item {
+            position: relative !important;
+            pointer-events: auto !important;
+        }
+    </style>
+</head>
+<body>
+
+<div class="app-container">
+
+    <div class="stardust-container" id="stardust-box"></div>
+    <div class="meteors-container" id="meteors-box"></div>
+
+    <!-- ========================================== -->
+    <!-- ⚡️ 1. ЭКРАН: ТОННЕЛЬ (ГЛАВНЫЙ) -->
+    <!-- ========================================== -->
+    <div class="screen active" id="screen-tunnel">
+        <div class="map-3d-wrapper">
+            <div class="map-container-3d">
+                <svg id="world-map" viewBox="0 0 1000 500">
+                    <g id="map-continents-group"></g>
+                    <g id="connections-group"></g>
+                    <g id="all-cities-group"></g>
+                </svg>
+            </div>
+        </div>
+
+        <div class="status-capsule">
+            <span class="status-label">СТАТУС VPN-КОНФИГА</span>
+            
+            <div class="status-badge disconnected" id="status-badge">
+                <span class="status-dot"></span>
+                <span id="status-text">НЕТ КЛЮЧА</span>
+            </div>
+            
+            <div class="telemetry-bar hidden" id="telemetry-bar">
+                <span>ПИНГ: <b id="ping-val">0</b> ms</span>
+                <span class="divider">|</span>
+                <span>ПРОТОКОЛ: <b>VLESS</b></span>
+            </div>
+        </div>
+
+        <div class="connect-button-wrapper">
+            <div class="liquid-button-container">
+                <div class="micro-waves-box" id="micro-waves-box"></div>
+                
+                <button class="power-button liquid-water-drop" id="connect-btn">
+                    <div class="hitbox-overlay"></div>
+                </button>
+                
+                <div id="liquid-drops-box"></div>
+            </div>
+        </div>
+
+        <div class="key-btn-container">
+            <button class="action-btn key-glow-btn hidden-slide" id="copy-key-btn" data-action="copy-vless-key">
+                <div class="hitbox-overlay"></div>
+                🔑 КОПИРОВАТЬ
+            </button>
+            <button class="action-btn key-glow-btn hidden-slide" id="open-key-btn" data-action="open-vless-key">
+                <div class="hitbox-overlay"></div>
+                🚀 ИМПОРТ
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 👤 2. ЭКРАН: ЛИЧНЫЙ КАБИНЕТ -->
+    <!-- ========================================== -->
+    <div class="screen" id="screen-profile">
+        <div class="profile-header">
+            <h2>👤 ТВОЙ ПРОФИЛЬ SOL</h2>
+        </div>
+
+        <div class="sub-card">
+            <div class="sub-info">
+                <span>СРОК ДЕЙСТВИЯ ПОДПИСКИ</span>
+                <p id="sub-days-left">0 дней</p>
+            </div>
+            <div class="progress-container">
+                <div class="progress-bar" id="sub-progress-bar"></div>
+            </div>
+        </div>
+
+        <div class="quick-actions-grid">
+            <div class="action-card" id="promo-trigger-card" data-action="toggle-promo">
+                <div class="hitbox-overlay"></div>
+                <span class="act-icon">🎁</span>
+                <span class="act-title">Промокод</span>
+            </div>
+            
+            <div class="action-card" id="ref-trigger-card" data-action="toggle-referral">
+                <div class="hitbox-overlay"></div>
+                <span class="act-icon">👥</span>
+                <span class="act-title">Рефералка</span>
+            </div>
+        </div>
+
+        <!-- ОКНО ПРОМОКОДА -->
+        <div class="promo-drawer-container hidden-drawer" id="promo-drawer">
+            <div class="promo-card-box" id="promo-card-element">
+                <div class="promo-header">
+                    <div class="promo-title-wrap">
+                        <span id="promo-header-text">🎁 ВВЕДИТЕ ПРОМОКОД</span>
+                        <span class="promo-status-msg" id="promo-status-msg"></span>
+                    </div>
+                    <button class="close-promo-btn" data-action="toggle-promo">
+                        <div class="hitbox-overlay"></div>
+                        ✕
+                    </button>
+                </div>
+                <div class="promo-input-row">
+                    <input type="text" id="promo-input-field" placeholder="Например: SOL2026">
+                    <button class="apply-promo-btn" id="promo-apply-btn" data-action="apply-promo">
+                        <div class="hitbox-overlay"></div>
+                        ОК
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ОКНО РЕФЕРАЛКИ -->
+        <div class="promo-drawer-container hidden-drawer" id="ref-drawer">
+            <div class="ref-card-box">
+                <div class="promo-header">
+                    <span>👥 РЕФЕРАЛЬНАЯ СИСТЕМА</span>
+                    <button class="close-promo-btn" data-action="toggle-referral">
+                        <div class="hitbox-overlay"></div>
+                        ✕
+                    </button>
+                </div>
+                <div class="ref-stats-row">
+                    <div class="ref-stat-item">
+                        <span class="ref-label">ВАША СТАВКА:</span>
+                        <span class="ref-val" id="ref-percent-val">5.0%</span>
+                    </div>
+                    <div class="ref-stat-item info-align-right">
+                        <span class="ref-label">НАКОПЛЕНО БАЛАНСА:</span>
+                        <span class="ref-val max-color" id="ref-balance-val">0 / 1000 ₽</span>
+                    </div>
+                </div>
+                <p class="ref-hint-text">Баланс отображается честно; списание в оплату будет доступно только после подключения серверной логики.</p>
+                
+                <div class="promo-input-row" style="margin-bottom: 12px;">
+                    <input type="text" id="ref-link-field" value="" placeholder="Загрузка ссылки..." readonly>
+                    <button class="apply-promo-btn" data-action="copy-referral-link">
+                        <div class="hitbox-overlay"></div>
+                        📋
+                    </button>
+                </div>
+
+                <button class="apply-promo-btn success-btn ref-pay-btn" id="ref-pay-btn" data-action="use-referral-balance">
+                    <div class="hitbox-overlay"></div>
+                    💳 ОПЛАТА БАЛАНСОМ ПОКА НЕДОСТУПНА
+                </button>
+            </div>
+        </div>
+
+        <!-- РАЗДЕЛ ТАРИФОВ -->
+        <div class="tariffs-section">
+            <button class="liquid-reveal-btn" id="tariffs-toggle-btn" data-action="toggle-tariffs">
+                <div class="hitbox-overlay"></div>
+                ПОСМОТРЕТЬ ТАРИФЫ
+            </button>
+
+            <div class="tariffs-flow-container hidden-flow" id="tariffs-flow">
+                <div class="tariffs-grid">
+                    <div class="tariff-card" id="tariff-1m" data-action="select-tariff" data-months="1">
+                        <div class="hitbox-overlay"></div>
+                        <div>
+                            <div class="tariff-title">1 МЕСЯЦ</div>
+                            <div class="tariff-desc">Базовый доступ</div>
+                        </div>
+                        <div class="tariff-price" id="price-1m">—</div>
+                        <div class="tariff-discount-tag" id="discount-tag-1m"></div>
+                    </div>
+                    
+                    <div class="tariff-card recommended" id="tariff-3m" data-action="select-tariff" data-months="3">
+                        <div class="hitbox-overlay"></div>
+                        <div class="badge" id="badge-3m">ТОП</div>
+                        <div>
+                            <div class="tariff-title">3 МЕСЯЦА</div>
+                            <div class="tariff-desc">Оптимальный выбор</div>
+                        </div>
+                        <div class="tariff-price" id="price-3m">—</div>
+                        <div class="tariff-discount-tag" id="discount-tag-3m"></div>
+                    </div>
+
+                    <div class="tariff-card" id="tariff-6m" data-action="select-tariff" data-months="6">
+                        <div class="hitbox-overlay"></div>
+                        <div class="badge hot" id="badge-6m">ВЫГОДА</div>
+                        <div>
+                            <div class="tariff-title">6 МЕСЯЦЕВ</div>
+                            <div class="tariff-desc">Максимальный комфорт</div>
+                        </div>
+                        <div class="tariff-price" id="price-6m">—</div>
+                        <div class="tariff-discount-tag" id="discount-tag-6m"></div>
+                    </div>
+
+                    <div class="tariff-card vip" id="tariff-12m" data-action="select-tariff" data-months="12">
+                        <div class="hitbox-overlay"></div>
+                        <div class="badge vip-badge" id="badge-12m">VIP</div>
+                        <div>
+                            <div class="tariff-title">12 МЕСЯЦЕВ</div>
+                            <div class="tariff-desc">Безлимит на год</div>
+                        </div>
+                        <div class="tariff-price" id="price-12m">—</div>
+                        <div class="tariff-discount-tag" id="discount-tag-12m"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 🎮 3. ЭКРАН: ИГРЫ -->
+    <!-- ========================================== -->
+    <div class="screen" id="screen-games">
+        <div class="game-lock-overlay hidden" id="game-lock-screen">
+            <div class="lock-icon">🔒</div>
+            <h3>ДОСТУП ОГРАНИЧЕН</h3>
+            <p>Для участия в космической охоте необходима активная подписка SOL VPN.</p>
+        </div>
+
+        <div class="games-header">
+            <h2>🎮 КОСМИЧЕСКАЯ ОХОТА</h2>
+            <div class="games-stats-bar">
+                <div class="stat-bubble">
+                    <span>🪐 РЕФ-ПРОЦЕНТ:</span>
+                    <b id="game-ref-percent">5.0% / 40%</b>
+                </div>
+            </div>
+        </div>
+
+        <div class="game-radar-box" id="radar-stage">
+            <div class="radar-circle-glow">
+                <div class="radar-line-scanner"></div>
+            </div>
+        </div>
+
+        <button class="liquid-reveal-btn radar-ready" id="start-radar-btn" data-action="start-game">
+            <div class="hitbox-overlay"></div>
+            ЗАПУСТИТЬ СКАНИРОВАНИЕ
+        </button>
+
+        <div class="space-slot-container" id="wheel-container">
+            <div class="slot-arrow">►</div>
+            <div class="slot-window">
+                <div class="slot-reel" id="roulette-wheel"></div>
+            </div>
+            <div class="slot-arrow">◄</div>
+        </div>
+
+        <div class="game-loot-middle-container">
+            <div class="crystal-container-row show-row" id="game-loot-middle-row"></div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 💡 4. ЭКРАН: ИНФО (FAQ И ТЕРМИНАЛ) -->
+    <!-- ========================================== -->
+    <div class="screen" id="screen-info">
+        <div class="faq-header">
+            <h2>💡 БАЗА ЗНАНИЙ</h2>
+        </div>
+
+        <div class="terminal-box" id="terminal-box-element">
+            <div class="terminal-header">
+                <span class="term-dot red"></span>
+                <span class="term-dot yellow"></span>
+                <span class="term-dot green"></span>
+                <span class="term-title">SOL_ASSISTANT_TERMINAL v2.5</span>
+            </div>
+            <div class="terminal-body" id="terminal-text"></div>
+        </div>
+
+        <div class="faq-questions-scroll">
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="1">
+                <div class="hitbox-overlay"></div>
+                🚀 Как подключить VPN?
+            </button>
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="2">
+                <div class="hitbox-overlay"></div>
+                🔑 Где взять VLESS ключ?
+            </button>
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="3">
+                <div class="hitbox-overlay"></div>
+                ⚡️ Какая максимальная скорость?
+            </button>
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="4">
+                <div class="hitbox-overlay"></div>
+                📱 Сколько устройств можно подключить?
+            </button>
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="5">
+                <div class="hitbox-overlay"></div>
+                📈 Как поднять % рефералки?
+            </button>
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="6">
+                <div class="hitbox-overlay"></div>
+                🔒 Почему заблокированы игры?
+            </button>
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="7">
+                <div class="hitbox-overlay"></div>
+                ☄️ Как ловить кометы?
+            </button>
+            <button class="faq-btn" data-action="answer-faq" data-faq-id="8">
+                <div class="hitbox-overlay"></div>
+                🌐 Работает ли на ПК и роутерах?
+            </button>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 👑 5. ЭКРАН: АДМИН-ПАНЕЛЬ -->
+    <!-- ========================================== -->
+    <div class="screen" id="screen-admin">
+        <div class="admin-header">
+            <h2>👑 ПАНЕЛЬ УПРАВЛЕНИЯ</h2>
+        </div>
+
+        <div class="admin-scroll-content">
+            <div class="admin-card">
+                <div class="admin-card-title">🎁 СОЗДАТЬ ПРОМОКОД</div>
+                
+                <div class="promo-input-row" style="margin-bottom: 12px;">
+                    <input type="text" id="admin-promo-name" placeholder="НАЗВАНИЕ (НАПР. VIP30)" style="text-transform: uppercase;">
+                </div>
+
+                <div class="admin-toggle-row">
+                    <button class="admin-type-btn" id="btn-mode-days" data-action="toggle-admin-promo-type" data-type="days">
+                        <div class="hitbox-overlay"></div>
+                        🎁 ДНИ
+                    </button>
+                    <button class="admin-type-btn" id="btn-mode-discount" data-action="toggle-admin-promo-type" data-type="discount">
+                        <div class="hitbox-overlay"></div>
+                        🔥 СКИДКА
+                    </button>
+                </div>
+
+                <div class="calc-widget-container disabled-block" id="block-days">
+                    <span class="calc-label">КОЛИЧЕСТВО ДНЕЙ ПОДПИСКИ</span>
+                    <div class="calc-control-bar">
+                        <button class="calc-step-btn" data-action="change-calc" data-key="days" data-delta="-1">
+                            <div class="hitbox-overlay"></div>
+                            −
+                        </button>
+                        <div class="calc-horizontal-viewport" id="touch-area-days">
+                            <div class="calc-horizontal-track">
+                                <span class="calc-num side" id="days-prev">6</span>
+                                <span class="calc-num active" id="days-center">7</span>
+                                <span class="calc-num side" id="days-next">8</span>
+                            </div>
+                        </div>
+                        <button class="calc-step-btn" data-action="change-calc" data-key="days" data-delta="1">
+                            <div class="hitbox-overlay"></div>
+                            +
+                        </button>
+                    </div>
+                </div>
+
+                <div class="calc-widget-container disabled-block" id="block-discount">
+                    <span class="calc-label">ПРОЦЕНТ СКИДКИ (%)</span>
+                    <div class="calc-control-bar">
+                        <button class="calc-step-btn" data-action="change-calc" data-key="discount" data-delta="-1">
+                            <div class="hitbox-overlay"></div>
+                            −
+                        </button>
+                        <div class="calc-horizontal-viewport" id="touch-area-discount">
+                            <div class="calc-horizontal-track">
+                                <span class="calc-num side" id="discount-prev">29</span>
+                                <span class="calc-num active" id="discount-center">30</span>
+                                <span class="calc-num side" id="discount-next">31</span>
+                            </div>
+                        </div>
+                        <button class="calc-step-btn" data-action="change-calc" data-key="discount" data-delta="1">
+                            <div class="hitbox-overlay"></div>
+                            +
+                        </button>
+                    </div>
+                </div>
+
+                <div class="admin-tariffs-row-sketch disabled-block" id="block-tariffs">
+                    <button class="t-sketch-btn" id="p-tariff-1m" data-action="toggle-admin-tariff" data-months="1">
+                        <div class="hitbox-overlay"></div>
+                        1 МЕС
+                    </button>
+                    <button class="t-sketch-btn" id="p-tariff-3m" data-action="toggle-admin-tariff" data-months="3">
+                        <div class="hitbox-overlay"></div>
+                        3 МЕС
+                    </button>
+                    <button class="t-sketch-btn" id="p-tariff-6m" data-action="toggle-admin-tariff" data-months="6">
+                        <div class="hitbox-overlay"></div>
+                        6 МЕС
+                    </button>
+                    <button class="t-sketch-btn" id="p-tariff-12m" data-action="toggle-admin-tariff" data-months="12">
+                        <div class="hitbox-overlay"></div>
+                        12 МЕС
+                    </button>
+                </div>
+
+                <div class="admin-toggle-row" style="margin-top: 12px;">
+                    <button class="admin-type-btn sub-mode active-green" id="btn-limit-days" data-action="set-admin-limit" data-limit-type="lifetime_days">
+                        <div class="hitbox-overlay"></div>
+                        ⏳ ДНИ ЖИЗНИ
+                    </button>
+                    <button class="admin-type-btn sub-mode" id="btn-limit-count" data-action="set-admin-limit" data-limit-type="activations">
+                        <div class="hitbox-overlay"></div>
+                        👥 АКТИВАЦИИ
+                    </button>
+                </div>
+
+                <div class="calc-widget-container active-green-block" id="block-limit">
+                    <span class="calc-label" id="limit-calc-title">ВЫБЕРИТЕ СРОК ЖИЗНИ (ДНИ)</span>
+                    <div class ="calc-control-bar">
+                        <button class="calc-step-btn" data-action="change-calc" data-key="limit" data-delta="-1">
+                            <div class="hitbox-overlay"></div>
+                            −
+                        </button>
+                        <div class="calc-horizontal-viewport" id="touch-area-limit">
+                            <div class="calc-horizontal-track">
+                                <span class="calc-num side" id="limit-prev">12</span>
+                                <span class="calc-num active" id="limit-center">13</span>
+                                <span class="calc-num side" id="limit-next">14</span>
+                            </div>
+                        </div>
+                        <button class="calc-step-btn" data-action="change-calc" data-key="limit" data-delta="1">
+                            <div class="hitbox-overlay"></div>
+                            +
+                        </button>
+                    </div>
+                </div>
+
+                <button class="admin-action-submit" data-action="create-admin-promo">
+                    <div class="hitbox-overlay"></div>
+                    СОХРАНИТЬ ПРОМОКОД
+                </button>
+            </div>
+
+            <div class="admin-card">
+                <div class="admin-card-title">⭐️ ОДОБРЕННЫЕ ПОЛЬЗОВАТЕЛИ</div>
+                <div class="promo-input-row" style="margin-bottom: 10px;">
+                    <input type="text" id="admin-approved-input" placeholder="@username">
+                    <button class="apply-promo-btn" data-action="add-vip-user">
+                        <div class="hitbox-overlay"></div>
+                        +
+                    </button>
+                </div>
+
+                <div class="drum-list-viewport">
+                    <div class="drum-list-inner" id="approved-users-drum"></div>
+                </div>
+            </div>
+
+            <div class="admin-card">
+                <div class="admin-card-title">👥 ВСЕ ПОЛЬЗОВАТЕЛИ</div>
+                <div class="promo-input-row" style="margin-bottom: 10px;">
+                    <input type="text" id="admin-search-user" placeholder="🔍 Поиск..." data-input-action="filter-users">
+                </div>
+
+                <div class="all-users-scroll-list" id="all-users-container"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- 🧭 НАВИГАЦИЯ -->
+    <!-- ========================================== -->
+    <nav class="bottom-nav" id="app-bottom-nav">
+        <div class="nav-liquid-box" id="nav-liquid-box"></div>
+
+        <button class="nav-item active" id="btn-nav-0" data-action="switch-nav" data-index="0" data-screen="tunnel">
+            <div class="hitbox-overlay"></div>
+            <span class="nav-icon">⚡️</span>
+            <span class="nav-text">Тоннель</span>
+        </button>
+
+        <button class="nav-item" id="btn-nav-1" data-action="switch-nav" data-index="1" data-screen="profile">
+            <div class="hitbox-overlay"></div>
+            <span class="nav-icon">👤</span>
+            <span class="nav-text">Кабинет</span>
+        </button>
+
+        <button class="nav-item" id="btn-nav-2" data-action="switch-nav" data-index="2" data-screen="games">
+            <div class="hitbox-overlay"></div>
+            <span class="nav-icon">🎮</span>
+            <span class="nav-text">Игры</span>
+        </button>
+
+        <button class="nav-item" id="btn-nav-3" data-action="switch-nav" data-index="3" data-screen="info">
+            <div class="hitbox-overlay"></div>
+            <span class="nav-icon">💡</span>
+            <span class="nav-text">Инфо</span>
+        </button>
+
+        <button class="nav-item admin-only-item hidden" id="btn-nav-4" data-action="switch-nav" data-index="4" data-screen="admin">
+            <div class="hitbox-overlay"></div>
+            <span class="nav-icon">👑</span>
+            <span class="nav-text">Админ</span>
+        </button>
+    </nav>
+
+</div>
+
+<script src="config.js?v=1"></script>
+<script src="app.js?v=5001"></script>
+</body>
+</html>
