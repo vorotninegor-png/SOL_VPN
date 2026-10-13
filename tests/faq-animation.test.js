@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+    characterDelay,
     createFaqAnimator,
     splitGraphemes,
     tokenizeFaqText
@@ -188,6 +189,14 @@ test("tokenizer preserves spaces and keeps words grouped for mobile wrapping", (
     assert.equal(splitGraphemes("☄️").length, 1);
 });
 
+test("long answers keep staggered delays through their final characters", () => {
+    const count = 220;
+    const penultimateDelay = characterDelay(count - 2, count);
+    const finalDelay = characterDelay(count - 1, count);
+    assert.ok(penultimateDelay < finalDelay);
+    assert.equal(finalDelay, 360);
+});
+
 test("animation renders individual characters and settles its height", () => {
     const { animator, box, container, scheduler } = createFixture();
     animator.show("Ключ готов");
@@ -220,15 +229,17 @@ test("reduced motion replaces text immediately without animation work", () => {
     assert.equal(animator.pendingCount(), 0);
 });
 
-test("page loads the FAQ animator before the cache-busted application bundle", () => {
+test("page loads motion helpers before the cache-busted application bundle", () => {
     const projectRoot = path.resolve(__dirname, "..");
     const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
     const app = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
-    const animatorPosition = html.indexOf("faq-animation.js?v=5002");
-    const appPosition = html.indexOf("app.js?v=5002");
+    const motionPosition = html.indexOf("ui-motion.js?v=5003");
+    const animatorPosition = html.indexOf("faq-animation.js?v=5003");
+    const appPosition = html.indexOf("app.js?v=5003");
 
-    assert.ok(html.includes("style.css?v=5002"));
-    assert.ok(animatorPosition >= 0 && animatorPosition < appPosition);
+    assert.ok(html.includes("style.css?v=5003"));
+    assert.ok(motionPosition >= 0 && motionPosition < animatorPosition && animatorPosition < appPosition);
     assert.equal(app.includes("word-glyph"), false);
     assert.equal(app.includes("dip-shrink"), false);
+    assert.equal(app.includes("Не заявлять ограничение"), false);
 });

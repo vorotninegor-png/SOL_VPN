@@ -1,5 +1,5 @@
 // =====================================================================
-// SOL VPN Mini App — frontend v4
+// SOL VPN Mini App — frontend v5
 // ВАЖНО: укажи публичный HTTPS URL backend, который запускает server.py.
 // Пример: https://api.example.com
 // =====================================================================
@@ -15,6 +15,7 @@ if (tg) {
 let userData = null;
 let isAdmin = false;
 let isConfigReady = false;        // только UI-состояние: VLESS URI получен
+let isConfigLoading = false;
 let isSubscribedUser = false;
 let currentVlessUri = "";
 let selectedMonths = null;
@@ -34,8 +35,10 @@ let refBalance = 0;
 const maxRefBalance = 1000;
 
 let isGameRunning = false;
+let isGameStarting = false;
 let isScanAvailable = true;
 let caughtCount = 0;
+const activeCometAnimations = new Map();
 
 let adminPromoTypes = { days: false, discount: false };
 let adminPickedTariffs = { 1: false, 3: false, 6: false, 12: false };
@@ -46,7 +49,6 @@ let adminPromoCreating = false;
 let adminPromoPage = 0;
 let adminPromoTotal = 0;
 let adminPromoRequestId = 0;
-let adminPromoSearchTimer = null;
 
 let approvedUsers = [];
 let allUsersList = [];
@@ -57,10 +59,24 @@ let adminUsersFilteredTotal = 0;
 let adminUsersLoading = false;
 let adminUsersRequestId = 0;
 let adminUsersInitialized = false;
-let adminSearchTimer = null;
 const adminStatFrames = new WeakMap();
 let mainButtonInitialized = false;
 let referralLink = "";
+let activeScreenId = "tunnel";
+let toastSequence = 0;
+
+const uiScheduler = window.SolUiMotion?.createTaskScheduler() || {
+    schedule(_key, callback, delay = 0) { return setTimeout(callback, delay); },
+    frame(_key, callback) { return requestAnimationFrame(callback); },
+    cancel() { return false; },
+    cancelGroup() {},
+    pendingCount() { return 0; }
+};
+
+function prefersReducedMotion() {
+    return window.SolUiMotion?.prefersReducedMotion(window)
+        ?? Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches);
+}
 
 // Каталог приходит только с backend; локальных цен в бизнес-логике нет.
 let tariffCatalog = {};
@@ -211,20 +227,31 @@ function showToast(message, type = "info") {
     if (!container) {
         container = document.createElement("div");
         container.id = "toast-container";
+        container.setAttribute("role", "status");
+        container.setAttribute("aria-live", "polite");
         document.body.appendChild(container);
     }
 
     const toast = document.createElement("div");
     toast.className = `toast ${type}`;
     toast.innerText = message;
+    const toastId = ++toastSequence;
+    const scope = `toast:${toastId}:`;
+    toast.dataset.motionScope = scope;
 
     container.appendChild(toast);
 
-    setTimeout(() => toast.classList.add("show"), 10);
+    while (container.children.length > 4) {
+        const oldest = container.firstElementChild;
+        if (!oldest) break;
+        uiScheduler.cancelGroup(oldest.dataset.motionScope || "toast:missing:");
+        oldest.remove();
+    }
 
-    setTimeout(() => {
+    uiScheduler.frame(`${scope}show`, () => toast.classList.add("show"));
+    uiScheduler.schedule(`${scope}hide`, () => {
         toast.classList.remove("show");
-        setTimeout(() => toast.remove(), 400);
+        uiScheduler.schedule(`${scope}remove`, () => toast.remove(), prefersReducedMotion() ? 0 : 400);
     }, 3200);
 }
 
@@ -348,7 +375,8 @@ function triggerLiquidSplash() {
     }
     dropsBox.innerHTML = dropsHTML;
 
-    setTimeout(() => {
+    uiScheduler.cancelGroup("liquid:");
+    uiScheduler.schedule("liquid:prepare", () => {
         const radius = 55;
         for (let i = 0; i < count; i++) {
             const drop = document.getElementById(`e-drop-${i}`);
@@ -362,18 +390,18 @@ function triggerLiquidSplash() {
                 drop.style.transform = `translate(${startX}px, ${startY}px) scale(0.5)`;
                 drop.style.opacity = "1";
 
-                setTimeout(() => {
+                uiScheduler.schedule(`liquid:move:${i}`, () => {
                     drop.style.transform = `translate(${targetX}px, ${targetY}px) scale(${0.8 + Math.random() * 0.4})`;
                     drop.style.opacity = "0.85";
 
-                    setTimeout(() => {
+                    uiScheduler.schedule(`liquid:end:${i}`, () => {
                         drop.style.transform = `translate(${startX}px, ${startY}px) scale(0.2)`;
                         drop.style.opacity = "0";
-                    }, 350);
-                }, 30);
+                    }, prefersReducedMotion() ? 0 : 350);
+                }, prefersReducedMotion() ? 0 : 30);
             }
         }
-    }, 10);
+    }, prefersReducedMotion() ? 0 : 10);
 }
 
 // ==========================================
@@ -389,6 +417,7 @@ const telemetryBar = document.getElementById("telemetry-bar");
 
 if (connectBtn) {
     connectBtn.addEventListener("click", async () => {
+        if (isConfigLoading) return;
         if (!serverOnline) {
             showToast("⚠️ Нет связи с backend на вашем ПК", "error");
             return;
@@ -413,7 +442,10 @@ function updateConnectButtonState() {
 }
 
 async function connectVPN() {
+    if (isConfigLoading) return;
+    isConfigLoading = true;
     isConfigReady = false;
+    if (connectBtn) connectBtn.disabled = true;
     statusText.innerText = "ПОЛУЧЕНИЕ КЛЮЧА...";
     statusBadge.className = "status-badge connecting";
     telemetryBar?.classList.add("hidden");
@@ -427,6 +459,8 @@ async function connectVPN() {
         if (!currentVlessUri) throw new Error("Backend не вернул VLESS URI");
         playConnectAnimation();
     } catch (error) {
+        isConfigLoading = false;
+        if (connectBtn) connectBtn.disabled = false;
         statusText.innerText = "ОШИБКА";
         statusBadge.className = "status-badge disconnected";
         showToast(`🚨 VPN: ${error.message}`, "error");
@@ -438,6 +472,11 @@ function playConnectAnimation() {
     const connectionsGroup = document.getElementById("connections-group");
     if (connectionsGroup) connectionsGroup.innerHTML = "";
     document.querySelectorAll(".city-point").forEach(el => el.className.baseVal !== undefined ? el.setAttribute("class", "city-point") : el.className = "city-point");
+
+    if (prefersReducedMotion()) {
+        finishConfigReady();
+        return;
+    }
 
     const pathNodes = generateLongSmartPath();
     if (pathNodes.length < 5 || !connectionsGroup) {
@@ -484,7 +523,10 @@ function playConnectAnimation() {
 }
 
 function finishConfigReady() {
+    activeLaserAnim = null;
+    isConfigLoading = false;
     isConfigReady = true;
+    if (connectBtn) connectBtn.disabled = false;
     statusText.innerText = "КЛЮЧ ГОТОВ";
     statusBadge.className = "status-badge connected";
     connectBtn?.classList.add("connected");
@@ -502,7 +544,7 @@ function flashCity(cityId) {
     const node = document.getElementById(`city-${cityId}`);
     if (!node || node.classList.contains("flash-green")) return;
     node.classList.add("flash-green");
-    setTimeout(() => node?.classList.remove("flash-green"), 450);
+    uiScheduler.schedule(`city:${cityId}`, () => node?.classList.remove("flash-green"), 450);
 }
 
 async function copyVlessKey() {
@@ -538,6 +580,7 @@ function togglePromoCard(forceState = null) {
     const drawer = document.getElementById("promo-drawer");
     const promoCardTrigger = document.getElementById("promo-trigger-card");
 
+    uiScheduler.cancel("promo:auto-close");
     if (forceState !== null) {
         isPromoOpen = forceState;
     } else {
@@ -553,7 +596,9 @@ function togglePromoCard(forceState = null) {
         if (promoCardTrigger) promoCardTrigger.classList.remove("active-card");
         resetPromoStyles();
     }
-    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+    promoCardTrigger?.setAttribute("aria-expanded", String(isPromoOpen));
+    drawer?.setAttribute("aria-hidden", String(!isPromoOpen));
+    if (forceState === null && tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
 function resetPromoStyles() {
@@ -587,7 +632,7 @@ async function applyPromoCode() {
     const code = inputField.value.trim().toUpperCase();
     if (!code) {
         card?.classList.add("error-glow");
-        setTimeout(() => card?.classList.remove("error-glow"), 350);
+        uiScheduler.schedule("promo:error", () => card?.classList.remove("error-glow"), 350);
         return;
     }
 
@@ -610,7 +655,7 @@ async function applyPromoCode() {
         applyBootstrap(result.bootstrap);
         showToast(result.message || `🎉 Промокод ${code} активирован`);
         tg?.HapticFeedback?.notificationOccurred("success");
-        setTimeout(() => {
+        uiScheduler.schedule("promo:auto-close", () => {
             inputField.value = "";
             togglePromoCard(false);
         }, 1200);
@@ -646,7 +691,9 @@ function toggleRefCard(forceState = null) {
         if (drawer) drawer.classList.add("hidden-drawer");
         if (refCardTrigger) refCardTrigger.classList.remove("active-card");
     }
-    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
+    refCardTrigger?.setAttribute("aria-expanded", String(isRefOpen));
+    drawer?.setAttribute("aria-hidden", String(!isRefOpen));
+    if (forceState === null && tg?.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
 function useRefBalanceForTariff() {
@@ -693,9 +740,15 @@ function updateRefUI() {
 function checkGameLockStatus() {
     const lockScreen = document.getElementById("game-lock-screen");
     if (isSubscribedUser) {
-        if (lockScreen) lockScreen.classList.add("hidden");
+        if (lockScreen) {
+            lockScreen.classList.add("hidden");
+            lockScreen.setAttribute("aria-hidden", "true");
+        }
     } else {
-        if (lockScreen) lockScreen.classList.remove("hidden");
+        if (lockScreen) {
+            lockScreen.classList.remove("hidden");
+            lockScreen.setAttribute("aria-hidden", "false");
+        }
     }
 }
 
@@ -703,7 +756,7 @@ function checkGameLockStatus() {
 // 🎮 6. ИГРЫ
 // ==========================================
 async function startCatchGame() {
-    if (isGameRunning) return;
+    if (isGameRunning || isGameStarting) return;
     if (!isSubscribedUser) {
         showToast("🔒 Нужна активная подписка", "error");
         return;
@@ -714,20 +767,27 @@ async function startCatchGame() {
     }
 
     let session;
+    const startBtn = document.getElementById("start-radar-btn");
+    isGameStarting = true;
+    if (startBtn) startBtn.disabled = true;
     try {
         session = await apiFetch("/api/game/start", { method: "POST", body: "{}" });
         currentGameSession = session.session_id;
     } catch (error) {
         showToast(`🚨 Игра: ${error.message}`, "error");
         return;
+    } finally {
+        isGameStarting = false;
+        if (startBtn && !session) startBtn.disabled = false;
     }
 
     isGameRunning = true;
+    uiScheduler.cancelGroup("game:");
+    clearActiveComets();
     isScanAvailable = isAdmin;
     caughtCount = 0;
 
     const stage = document.getElementById("radar-stage");
-    const startBtn = document.getElementById("start-radar-btn");
     if (stage) stage.innerHTML = `<div class="radar-circle-glow"><div class="radar-line-scanner"></div></div>`;
     if (startBtn) {
         startBtn.className = "liquid-reveal-btn radar-active";
@@ -748,19 +808,29 @@ async function startCatchGame() {
             slot.id = `loot-slot-${i}`;
             crystalArea.appendChild(slot);
         }
-        setTimeout(() => crystalArea.classList.add("show-row"), 50);
+        uiScheduler.frame("game:loot-row", () => crystalArea.classList.add("show-row"));
     }
 
     for (let i = 0; i < 5; i++) {
-        setTimeout(() => {
+        uiScheduler.schedule(`game:spawn:${i}`, () => {
             if (isGameRunning) spawnComet(i, 1800 + Math.random() * 1600);
         }, i * 1100);
     }
 
-    setTimeout(() => {
+    uiScheduler.schedule("game:finish", () => {
         isGameRunning = false;
+        clearActiveComets();
+        if (startBtn) startBtn.disabled = false;
         updateGameButtonState();
     }, 7000);
+}
+
+function clearActiveComets() {
+    activeCometAnimations.forEach((animation, comet) => {
+        animation?.pause?.();
+        comet?.remove?.();
+    });
+    activeCometAnimations.clear();
 }
 
 function spawnComet(index, speed) {
@@ -799,15 +869,18 @@ function spawnComet(index, speed) {
         easing: 'linear',
         duration: speed,
         complete: function() {
+            activeCometAnimations.delete(comet);
             if (comet && comet.parentNode) {
                 comet.remove();
             }
         }
     });
+    activeCometAnimations.set(comet, animMove);
 
     const onHit = (e) => {
         e.stopPropagation();
         animMove.pause();
+        activeCometAnimations.delete(comet);
 
         if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("heavy");
         
@@ -846,6 +919,8 @@ function spawnComet(index, speed) {
 function triggerBigCometExplosion(x, y, color) {
     const stage = document.getElementById("radar-stage");
     if (!stage) return;
+
+    if (prefersReducedMotion()) return;
 
     const particleCount = 18;
     for (let i = 0; i < particleCount; i++) {
@@ -908,7 +983,7 @@ async function determineLoot(x, y, slot, randColor) {
         if (reward.type === "discount") {
             createFloatingText(x, y, `🔥 -${reward.value}%!`, "green-text");
             prizeHTML = `<span style="color:${randColor};font-weight:bold">-${reward.value}%</span>`;
-            setTimeout(() => spinSpaceSlot(reward.value, Number(reward.months)), 200);
+            uiScheduler.schedule("reel:pending", () => spinSpaceSlot(reward.value, Number(reward.months)), 200);
         } else if (reward.type === "ref_plus") {
             createFloatingText(x, y, `+${reward.value}%`, "green-text");
             prizeHTML = `<span style="color:#10b981;font-weight:700">+${reward.value}%</span>`;
@@ -941,18 +1016,24 @@ function spinSpaceSlot(discountValue, targetSegment) {
     const finalTranslateY = -(targetGlobalIndex * cardHeight);
     const neons = { 1: "#3b82f6", 3: "#a855f7", 6: "#10b981", 12: "#f59e0b" };
 
+    uiScheduler.cancelGroup("reel:");
     reel.style.transition = "none";
     reel.style.transform = "translateY(0)";
-    setTimeout(() => {
+    if (prefersReducedMotion()) {
+        reel.style.transform = `translateY(${finalTranslateY}px)`;
+        showToast(`🔥 Скидка ${discountValue}% на тариф ${targetSegment} мес.`);
+        return;
+    }
+    uiScheduler.frame("reel:start", () => {
         reel.style.transition = "transform 3.6s cubic-bezier(0.15,0.85,0.15,1)";
         reel.style.transform = `translateY(${finalTranslateY}px)`;
-    }, 50);
-    setTimeout(() => {
+    });
+    uiScheduler.schedule("reel:result", () => {
         const color = neons[targetSegment] || "#a855f7";
         slotContainer.style.borderColor = color;
         slotContainer.style.boxShadow = `0 0 35px ${color}, inset 0 0 15px ${color}`;
         showToast(`🔥 Скидка ${discountValue}% на тариф ${targetSegment} мес.`);
-        setTimeout(() => {
+        uiScheduler.schedule("reel:reset", () => {
             slotContainer.style.borderColor = "rgba(255,255,255,0.2)";
             slotContainer.style.boxShadow = "0 8px 25px rgba(0,0,0,0.5), inset 0 0 12px rgba(255,255,255,0.08)";
         }, 2500);
@@ -968,7 +1049,8 @@ function createFloatingText(x, y, text, cssClass) {
     el.style.top = `${y}px`;
     el.innerText = text;
     stage.appendChild(el);
-    setTimeout(() => el.remove(), 1200);
+    const floatingId = ++toastSequence;
+    uiScheduler.schedule(`floating:${floatingId}`, () => el.remove(), prefersReducedMotion() ? 100 : 1200);
 }
 
 function fillReelCards() {
@@ -1256,14 +1338,18 @@ async function createAdminPromo() {
 }
 
 function filterAdminPromos() {
-    clearTimeout(adminPromoSearchTimer);
-    adminPromoSearchTimer = setTimeout(() => loadAdminPromos(0), 250);
+    uiScheduler.schedule("admin-promos:search", () => loadAdminPromos(0), 250);
 }
 
 async function loadAdminPromos(page = 0) {
     if (!isAdmin) return;
     const requestId = ++adminPromoRequestId;
     const query = document.getElementById("admin-promo-search")?.value.trim() || "";
+    const list = document.getElementById("admin-promos-list");
+    list?.classList.add("is-loading");
+    list?.setAttribute("aria-busy", "true");
+    const state = document.getElementById("admin-promos-state");
+    if (state) state.textContent = "Загрузка промокодов…";
     try {
         const params = new URLSearchParams({ limit: "30", offset: String(Math.max(0, page) * 30), q: query });
         const result = await apiFetch(`/api/admin/promocodes?${params}`, { method: "GET" });
@@ -1272,7 +1358,6 @@ async function loadAdminPromos(page = 0) {
         if (page > 0 && !promos.length && result.total > 0) return loadAdminPromos(page - 1);
         adminPromoPage = Math.max(0, page);
         adminPromoTotal = Number(result.total) || 0;
-        const list = document.getElementById("admin-promos-list");
         if (list) list.innerHTML = promos.length ? promos.map(p => {
             const bonus = [p.days ? `${p.days} дн.` : "", p.discount_percent ? `${p.discount_percent}%` : ""].filter(Boolean).join(" + ");
             const selectedTariffs = Array.isArray(p.tariffs) ? p.tariffs : [];
@@ -1284,7 +1369,6 @@ async function loadAdminPromos(page = 0) {
                 <div>Создан: ${escapeHtml(p.created_at || "—")} · До: ${escapeHtml(p.expires_at || "—")} UTC</div>
                 ${p.status !== "disabled" ? `<button type="button" data-action="disable-admin-promo" data-code="${escapeHtml(p.code)}">Отключить</button>` : ""}</div>`;
         }).join("") : `<div class="empty-list-msg">Промокоды не найдены</div>`;
-        const state = document.getElementById("admin-promos-state");
         if (state) state.textContent = `Показано ${adminPromoTotal ? adminPromoPage * 30 + 1 : 0}–${adminPromoPage * 30 + promos.length} из ${adminPromoTotal}`;
         const pageLabel = document.getElementById("admin-promos-page");
         if (pageLabel) pageLabel.textContent = `Страница ${adminPromoPage + 1}`;
@@ -1294,6 +1378,13 @@ async function loadAdminPromos(page = 0) {
         if (next) next.disabled = (adminPromoPage + 1) * 30 >= adminPromoTotal;
     } catch (error) {
         showToast(`🚨 ${error.message}`, "error");
+    } finally {
+        if (requestId === adminPromoRequestId) {
+            uiScheduler.frame("admin-promos:ready", () => {
+                list?.classList.remove("is-loading");
+                list?.setAttribute("aria-busy", "false");
+            });
+        }
     }
 }
 
@@ -1395,8 +1486,7 @@ function renderAdminStats(data) {
 }
 
 function filterAllUsersList() {
-    clearTimeout(adminSearchTimer);
-    adminSearchTimer = setTimeout(() => loadAdminUsers(0), 250);
+    uiScheduler.schedule("admin-users:search", () => loadAdminUsers(0), 250);
 }
 
 async function loadAdminUsers(page = 0) {
@@ -1404,6 +1494,9 @@ async function loadAdminUsers(page = 0) {
     const query = document.getElementById("admin-search-user")?.value.trim() || "";
     const requestId = ++adminUsersRequestId;
     adminUsersLoading = true;
+    const usersContainer = document.getElementById("all-users-container");
+    usersContainer?.classList.add("is-loading");
+    usersContainer?.setAttribute("aria-busy", "true");
     renderAdminUsersState();
     try {
         const params = new URLSearchParams({
@@ -1438,6 +1531,10 @@ async function loadAdminUsers(page = 0) {
         if (requestId === adminUsersRequestId) {
             adminUsersLoading = false;
             renderAdminUsersState();
+            uiScheduler.frame("admin-users:ready", () => {
+                usersContainer?.classList.remove("is-loading");
+                usersContainer?.setAttribute("aria-busy", "false");
+            });
         }
     }
 }
@@ -1572,7 +1669,7 @@ const faqAnswers = {
     1: "Откройте вкладку «Тоннель», нажмите на основную кнопку и дождитесь статуса «Ключ готов». Затем скопируйте персональный VLESS-ключ и импортируйте его в совместимое VPN-приложение.",
     2: "После получения конфигурации во вкладке «Тоннель» нажмите кнопку «Копировать». Ключ будет доступен для импорта в VPN-клиент.",
     3: "Скорость и задержка зависят от сервера, его нагрузки, маршрута подключения, оператора связи и других сетевых факторов. Конкретная скорость не гарантируется.",
-    4: "Сейчас один VLESS-ключ технически может использоваться на нескольких устройствах. Строгое серверное ограничение количества устройств пока не реализовано. Не заявлять ограничение «одно устройство» до появления соответствующего механизма.",
+    4: "Сейчас один VLESS-ключ технически может использоваться на нескольких устройствах. Строгое серверное ограничение количества устройств пока не реализовано.",
     5: "Откройте вкладку «Игры», запускайте космический радар и ловите кометы. За определённые награды можно увеличивать реферальный процент. Максимальное значение — 40%.",
     6: "Для доступа к играм требуется активная подписка SOL VPN. Выберите подходящий тариф во вкладке «Кабинет».",
     7: "Запустите сканирование космического радара и нажимайте на пролетающие кометы, пока они находятся на экране.",
@@ -1618,21 +1715,33 @@ function toggleTariffs(forceOpen = false) {
         isTariffsOpen = !isTariffsOpen;
     }
 
+    uiScheduler.cancelGroup("tariffs:");
+    const reducedMotion = prefersReducedMotion();
+    const orderedCards = Array.from(cards);
+    const toggleButton = document.getElementById("tariffs-toggle-btn");
+
     if (isTariffsOpen) {
         if (isPromoOpen) togglePromoCard(false);
         if (isRefOpen) toggleRefCard(false);
-        
-        flowContainer.classList.remove("hidden-flow");
-        cards.forEach((card, index) => {
-            setTimeout(() => { if (card) card.classList.add("show-card"); }, index * 90);
+
+        flowContainer.classList.remove("hidden-flow", "is-closing");
+        orderedCards.forEach((card, index) => {
+            const delay = reducedMotion ? 0 : window.SolUiMotion?.staggerDelay(index, orderedCards.length, 70, 210) || 0;
+            card.style.setProperty("--tariff-delay", `${delay}ms`);
         });
+        uiScheduler.frame("tariffs:show", () => orderedCards.forEach(card => card.classList.add("show-card")));
     } else {
-        const reversedCards = Array.from(cards).reverse();
+        flowContainer.classList.add("is-closing");
+        const reversedCards = orderedCards.reverse();
         reversedCards.forEach((card, index) => {
-            setTimeout(() => { if (card) card.classList.remove("show-card"); }, index * 70);
+            const delay = reducedMotion ? 0 : window.SolUiMotion?.staggerDelay(index, reversedCards.length, 55, 165) || 0;
+            card.style.setProperty("--tariff-delay", `${delay}ms`);
+            card.classList.remove("show-card");
         });
-        setTimeout(() => { flowContainer.classList.add("hidden-flow"); }, cards.length * 70 + 200);
+        uiScheduler.schedule("tariffs:hide", () => flowContainer.classList.add("hidden-flow"), reducedMotion ? 0 : 520);
     }
+    toggleButton?.setAttribute("aria-expanded", String(isTariffsOpen));
+    flowContainer.setAttribute("aria-hidden", String(!isTariffsOpen));
     if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
@@ -1696,13 +1805,24 @@ function initTelegramMainButton() {
 // 🧭 НАВИГАЦИЯ
 // ==========================================
 function switchNav(index, screenId) {
+    if (!screenId || screenId === activeScreenId) {
+        alignNavBox(index);
+        return;
+    }
+    activeScreenId = screenId;
+    uiScheduler.cancel("navigation:activate");
     document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
     document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
     
     const activeScreen = document.getElementById(`screen-${screenId}`);
     const activeNavBtn = document.getElementById(`btn-nav-${index}`);
     
-    if (activeScreen) activeScreen.classList.add("active");
+    document.querySelectorAll(".screen").forEach(screen => {
+        screen.setAttribute("aria-hidden", String(screen !== activeScreen));
+    });
+    if (activeScreen) {
+        uiScheduler.frame("navigation:activate", () => activeScreen.classList.add("active"));
+    }
     if (activeNavBtn) activeNavBtn.classList.add("active");
 
     alignNavBox(index);
@@ -1725,7 +1845,7 @@ function alignNavBox(index) {
     const navBox = document.getElementById("nav-liquid-box");
     if (targetBtn && navBox) {
         const centerOffset = targetBtn.offsetLeft + (targetBtn.offsetWidth / 2) - (navBox.offsetWidth / 2);
-        navBox.style.left = `${centerOffset}px`;
+        navBox.style.transform = `translate3d(${centerOffset}px, 0, 0)`;
     }
 }
 
@@ -1811,6 +1931,13 @@ function initActionHandlers() {
         if (event.target.matches('[data-input-action="filter-promos"]')) filterAdminPromos();
         if (event.target.matches('#admin-promo-name, #admin-promo-max, #admin-promo-expires')) invalidateAdminPromoPreview();
     });
+
+    document.addEventListener("keydown", event => {
+        const target = event.target.closest('[role="button"][data-action]');
+        if (!target || (event.key !== "Enter" && event.key !== " ")) return;
+        event.preventDefault();
+        target.click();
+    });
 }
 
 // ==========================================
@@ -1831,4 +1958,18 @@ window.addEventListener("load", async () => {
     if (!data) {
         showToast("Интерфейс загружен, но backend пока недоступен", "error");
     }
+});
+
+window.addEventListener("resize", () => {
+    const activeNav = document.querySelector(".nav-item.active");
+    if (!activeNav) return;
+    uiScheduler.frame("navigation:resize", () => alignNavBox(Number(activeNav.dataset.index || 0)));
+}, { passive: true });
+
+window.addEventListener("pagehide", event => {
+    if (event.persisted) return;
+    activeLaserAnim?.pause?.();
+    clearActiveComets();
+    faqAnimator?.destroy?.();
+    uiScheduler.destroy?.();
 });

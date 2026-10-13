@@ -15,7 +15,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=5002">
+    <link rel="stylesheet" href="style.css?v=5003">
 
     <style>
         /* 🚨 МАКСИМАЛЬНЫЙ ПРИОРИТЕТ ДЛЯ ХИТБОКСОВ СЛОЕВ ВЕРСТКИ 🚨 */
@@ -67,7 +67,7 @@
     <!-- ========================================== -->
     <!-- ⚡️ 1. ЭКРАН: ТОННЕЛЬ (ГЛАВНЫЙ) -->
     <!-- ========================================== -->
-    <div class="screen active" id="screen-tunnel">
+    <div class="screen active" id="screen-tunnel" aria-hidden="false">
         <div class="map-3d-wrapper">
             <div class="map-container-3d">
                 <svg id="world-map" viewBox="0 0 1000 500">
@@ -81,7 +81,7 @@
         <div class="status-capsule">
             <span class="status-label">СТАТУС VPN-КОНФИГА</span>
             
-            <div class="status-badge disconnected" id="status-badge">
+            <div class="status-badge disconnected" id="status-badge" role="status" aria-live="polite">
                 <span class="status-dot"></span>
                 <span id="status-text">НЕТ КЛЮЧА</span>
             </div>
@@ -120,7 +120,7 @@
     <!-- ========================================== -->
     <!-- 👤 2. ЭКРАН: ЛИЧНЫЙ КАБИНЕТ -->
     <!-- ========================================== -->
-    <div class="screen" id="screen-profile">
+    <div class="screen" id="screen-profile" aria-hidden="true">
         <div class="profile-header">
             <h2>👤 ТВОЙ ПРОФИЛЬ SOL</h2>
         </div>
@@ -136,13 +136,13 @@
         </div>
 
         <div class="quick-actions-grid">
-            <div class="action-card" id="promo-trigger-card" data-action="toggle-promo">
+            <div class="action-card" id="promo-trigger-card" data-action="toggle-promo" role="button" tabindex="0" aria-expanded="false" aria-controls="promo-drawer">
                 <div class="hitbox-overlay"></div>
                 <span class="act-icon">🎁</span>
                 <span class="act-title">Промокод</span>
             </div>
             
-            <div class="action-card" id="ref-trigger-card" data-action="toggle-referral">
+            <div class="action-card" id="ref-trigger-card" data-action="toggle-referral" role="button" tabindex="0" aria-expanded="false" aria-controls="ref-drawer">
                 <div class="hitbox-overlay"></div>
                 <span class="act-icon">👥</span>
                 <span class="act-title">Рефералка</span>
@@ -150,7 +150,7 @@
         </div>
 
         <!-- ОКНО ПРОМОКОДА -->
-        <div class="promo-drawer-container hidden-drawer" id="promo-drawer">
+        <div class="promo-drawer-container hidden-drawer" id="promo-drawer" aria-hidden="true">
             <div class="promo-card-box" id="promo-card-element">
                 <div class="promo-header">
                     <div class="promo-title-wrap">
@@ -173,7 +173,7 @@
         </div>
 
         <!-- ОКНО РЕФЕРАЛКИ -->
-        <div class="promo-drawer-container hidden-drawer" id="ref-drawer">
+        <div class="promo-drawer-container hidden-drawer" id="ref-drawer" aria-hidden="true">
             <div class="ref-card-box">
                 <div class="promo-header">
                     <span>👥 РЕФЕРАЛЬНАЯ СИСТЕМА</span>
@@ -211,12 +211,12 @@
 
         <!-- РАЗДЕЛ ТАРИФОВ -->
         <div class="tariffs-section">
-            <button class="liquid-reveal-btn" id="tariffs-toggle-btn" data-action="toggle-tariffs">
+            <button class="liquid-reveal-btn" id="tariffs-toggle-btn" data-action="toggle-tariffs" aria-expanded="false" aria-controls="tariffs-flow">
                 <div class="hitbox-overlay"></div>
                 ПОСМОТРЕТЬ ТАРИФЫ
             </button>
 
-            <div class="tariffs-flow-container hidden-flow" id="tariffs-flow">
+            <div class="tariffs-flow-container hidden-flow" id="tariffs-flow" aria-hidden="true">
                 <div class="tariffs-grid">
                     <div class="tariff-card" id="tariff-1m" data-action="select-tariff" data-months="1">
                         <div class="hitbox-overlay"></div>
@@ -268,8 +268,8 @@
     <!-- ========================================== -->
     <!-- 🎮 3. ЭКРАН: ИГРЫ -->
     <!-- ========================================== -->
-    <div class="screen" id="screen-games">
-        <div class="game-lock-overlay hidden" id="game-lock-screen">
+    <div class="screen" id="screen-games" aria-hidden="true">
+        <div class="game-lock-overlay hidden" id="game-lock-screen" aria-hidden="true">
             <div class="lock-icon">🔒</div>
             <h3>ДОСТУП ОГРАНИЧЕН</h3>
             <p>Для участия в космической охоте необходима активная подписка SOL VPN.</p>
@@ -312,7 +312,7 @@
     <!-- ========================================== -->
     <!-- 💡 4. ЭКРАН: ИНФО (FAQ И ТЕРМИНАЛ) -->
     <!-- ========================================== -->
-    <div class="screen" id="screen-info">
+    <div class="screen" id="screen-info" aria-hidden="true">
         <div class="faq-header">
             <h2>💡 БАЗА ЗНАНИЙ</h2>
         </div>
@@ -366,7 +366,7 @@
     <!-- ========================================== -->
     <!-- 👑 5. ЭКРАН: АДМИН-ПАНЕЛЬ -->
     <!-- ========================================== -->
-    <div class="screen" id="screen-admin">
+    <div class="screen" id="screen-admin" aria-hidden="true">
         <div class="admin-header">
             <h2>👑 ПАНЕЛЬ УПРАВЛЕНИЯ</h2>
         </div>
@@ -561,7 +561,8 @@
 </div>
 
 <script src="config.js?v=1"></script>
-<script src="faq-animation.js?v=5002"></script>
-<script src="app.js?v=5002"></script>
+<script src="ui-motion.js?v=5003"></script>
+<script src="faq-animation.js?v=5003"></script>
+<script src="app.js?v=5003"></script>
 </body>
 </html>

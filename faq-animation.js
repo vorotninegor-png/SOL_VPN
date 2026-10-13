@@ -12,8 +12,14 @@
 
     const EXIT_BASE_MS = 150;
     const CHARACTER_STEP_MS = 5;
-    const MAX_STAGGERED_CHARACTERS = 50;
+    const MAX_STAGGER_MS = 360;
     const HEIGHT_TRANSITION_MS = 320;
+
+    function characterDelay(index, characterCount) {
+        if (characterCount <= 1) return 0;
+        const totalDelay = Math.min((characterCount - 1) * CHARACTER_STEP_MS, MAX_STAGGER_MS);
+        return Math.round((index / (characterCount - 1)) * totalDelay);
+    }
 
     function splitGraphemes(value) {
         const text = String(value || "");
@@ -92,22 +98,27 @@
         }
 
         function phaseDuration(characterCount, baseDuration) {
-            return baseDuration + Math.min(characterCount, MAX_STAGGERED_CHARACTERS) * CHARACTER_STEP_MS;
+            return baseDuration + characterDelay(Math.max(0, characterCount - 1), characterCount);
         }
 
-        function setCharacterDelay(element, index) {
+        function setCharacterDelay(element, index, characterCount) {
             element.style.setProperty(
                 "--faq-char-delay",
-                `${Math.min(index, MAX_STAGGERED_CHARACTERS) * CHARACTER_STEP_MS}ms`
+                `${characterDelay(index, characterCount)}ms`
             );
         }
 
         function renderAnimatedText(text) {
             const documentObject = container.ownerDocument;
             const fragment = documentObject.createDocumentFragment();
+            const tokens = tokenizeFaqText(text);
+            const characterCount = tokens.reduce(
+                (total, token) => total + (token.type === "word" ? token.characters.length : 0),
+                0
+            );
             let characterIndex = 0;
 
-            tokenizeFaqText(text).forEach(token => {
+            tokens.forEach(token => {
                 if (token.type === "space") {
                     const whitespace = documentObject.createElement("span");
                     whitespace.className = "faq-space";
@@ -122,7 +133,7 @@
                     const glyph = documentObject.createElement("span");
                     glyph.className = "faq-char faq-char-enter";
                     glyph.textContent = character;
-                    setCharacterDelay(glyph, characterIndex);
+                    setCharacterDelay(glyph, characterIndex, characterCount);
                     characterIndex += 1;
                     word.appendChild(glyph);
                 });
@@ -186,7 +197,7 @@
 
             currentCharacters.forEach((character, index) => {
                 character.classList.remove("faq-char-enter");
-                setCharacterDelay(character, index);
+                setCharacterDelay(character, index, currentCharacters.length);
                 character.classList.add("faq-char-exit");
             });
 
@@ -211,6 +222,7 @@
     }
 
     return {
+        characterDelay,
         createFaqAnimator,
         splitGraphemes,
         tokenizeFaqText
