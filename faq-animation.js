@@ -10,7 +10,7 @@
 }(typeof globalThis !== "undefined" ? globalThis : this, function () {
     "use strict";
 
-    const EXIT_BASE_MS = 150;
+    const CHARACTER_TRANSITION_MS = 180;
     const CHARACTER_STEP_MS = 5;
     const MAX_STAGGER_MS = 360;
     const HEIGHT_TRANSITION_MS = 320;
@@ -97,8 +97,9 @@
             box.style.overflow = "";
         }
 
-        function phaseDuration(characterCount, baseDuration) {
-            return baseDuration + characterDelay(Math.max(0, characterCount - 1), characterCount);
+        function phaseDuration(characterCount) {
+            return CHARACTER_TRANSITION_MS
+                + characterDelay(Math.max(0, characterCount - 1), characterCount);
         }
 
         function setCharacterDelay(element, index, characterCount) {
@@ -204,7 +205,7 @@
             later(() => {
                 if (activeRevision !== revision || destroyed) return;
                 renderAndEnter(safeText, activeRevision);
-            }, phaseDuration(currentCharacters.length, EXIT_BASE_MS));
+            }, phaseDuration(currentCharacters.length));
         }
 
         function destroy() {
@@ -222,8 +223,11 @@
     }
 
     return {
+        CHARACTER_TRANSITION_MS,
         characterDelay,
         createFaqAnimator,
+        phaseDuration: characterCount => CHARACTER_TRANSITION_MS
+            + characterDelay(Math.max(0, characterCount - 1), characterCount),
         splitGraphemes,
         tokenizeFaqText
     };

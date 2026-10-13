@@ -15,7 +15,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=5003">
+    <link rel="stylesheet" href="style.css?v=5004">
 
     <style>
         /* 🚨 МАКСИМАЛЬНЫЙ ПРИОРИТЕТ ДЛЯ ХИТБОКСОВ СЛОЕВ ВЕРСТКИ 🚨 */
@@ -83,7 +83,7 @@
             
             <div class="status-badge disconnected" id="status-badge" role="status" aria-live="polite">
                 <span class="status-dot"></span>
-                <span id="status-text">НЕТ КЛЮЧА</span>
+                <span id="status-text">КЛЮЧ НЕ ПОЛУЧЕН</span>
             </div>
             
             <div class="telemetry-bar hidden" id="telemetry-bar">
@@ -106,13 +106,13 @@
         </div>
 
         <div class="key-btn-container">
-            <button class="action-btn key-glow-btn hidden-slide" id="copy-key-btn" data-action="copy-vless-key">
+            <button type="button" class="action-btn key-glow-btn hidden-slide" id="copy-key-btn" data-action="copy-vless-key">
                 <div class="hitbox-overlay"></div>
                 🔑 КОПИРОВАТЬ
             </button>
-            <button class="action-btn key-glow-btn hidden-slide" id="open-key-btn" data-action="open-vless-key">
+            <button type="button" class="action-btn key-glow-btn hidden-slide" id="open-key-btn" data-action="show-vless-import">
                 <div class="hitbox-overlay"></div>
-                🚀 ИМПОРТ
+                📲 КАК ИМПОРТИРОВАТЬ
             </button>
         </div>
     </div>
@@ -521,6 +521,28 @@
         </div>
     </div>
 
+    <div class="vless-import-overlay" id="vless-import-overlay" aria-hidden="true">
+        <section class="vless-import-sheet" role="dialog" aria-modal="true" aria-labelledby="vless-import-title">
+            <button type="button" class="vless-sheet-close" data-action="close-vless-import" aria-label="Закрыть">×</button>
+            <div class="vless-sheet-kicker">SOL VPN · БЕЗОПАСНЫЙ ИМПОРТ</div>
+            <h2 id="vless-import-title">Импорт VLESS-ключа</h2>
+            <p class="vless-sheet-status ready" id="vless-copy-status" role="status" aria-live="polite">Ключ готов</p>
+            <p class="vless-sheet-note">Mini App выдаёт конфигурацию, но подключение выполняется внутри VPN-клиента.</p>
+
+            <label class="vless-key-label" for="vless-manual-field">Персональный ключ</label>
+            <textarea id="vless-manual-field" class="vless-manual-field" rows="3" readonly spellcheck="false" autocomplete="off" aria-describedby="vless-manual-help"></textarea>
+            <p class="vless-manual-help" id="vless-manual-help">Если автоматическое копирование недоступно, выделите ключ и скопируйте его системной командой.</p>
+
+            <div class="vless-sheet-actions">
+                <button type="button" class="vless-sheet-btn primary" data-action="copy-vless-key">🔑 Скопировать</button>
+                <button type="button" class="vless-sheet-btn" data-action="select-vless-key">Выделить вручную</button>
+            </div>
+
+            <ol class="vless-client-list" id="vless-client-list" aria-label="Инструкции для VPN-клиентов"></ol>
+            <p class="vless-sheet-footnote">После импорта выберите профиль SOL VPN и подключитесь уже в приложении-клиенте.</p>
+        </section>
+    </div>
+
     <!-- ========================================== -->
     <!-- 🧭 НАВИГАЦИЯ -->
     <!-- ========================================== -->
@@ -561,8 +583,9 @@
 </div>
 
 <script src="config.js?v=1"></script>
-<script src="ui-motion.js?v=5003"></script>
-<script src="faq-animation.js?v=5003"></script>
-<script src="app.js?v=5003"></script>
+<script src="ui-motion.js?v=5004"></script>
+<script src="faq-animation.js?v=5004"></script>
+<script src="vless-actions.js?v=5004"></script>
+<script src="app.js?v=5004"></script>
 </body>
 </html>

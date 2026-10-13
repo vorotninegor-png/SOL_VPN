@@ -16,6 +16,7 @@ let userData = null;
 let isAdmin = false;
 let isConfigReady = false;        // только UI-состояние: VLESS URI получен
 let isConfigLoading = false;
+let vlessCopyInProgress = false;
 let isSubscribedUser = false;
 let currentVlessUri = "";
 let selectedMonths = null;
@@ -414,6 +415,14 @@ const statusText = document.getElementById("status-text");
 const copyKeyBtn = document.getElementById("copy-key-btn");
 const openKeyBtn = document.getElementById("open-key-btn");
 const telemetryBar = document.getElementById("telemetry-bar");
+const vlessImportOverlay = document.getElementById("vless-import-overlay");
+const vlessManualField = document.getElementById("vless-manual-field");
+const vlessCopyStatus = document.getElementById("vless-copy-status");
+const vlessClientList = document.getElementById("vless-client-list");
+const vlessClipboard = window.SolVlessActions?.createVlessClipboard({
+    navigatorObject: window.navigator,
+    documentObject: document
+}) || null;
 
 if (connectBtn) {
     connectBtn.addEventListener("click", async () => {
@@ -445,6 +454,7 @@ async function connectVPN() {
     if (isConfigLoading) return;
     isConfigLoading = true;
     isConfigReady = false;
+    currentVlessUri = "";
     if (connectBtn) connectBtn.disabled = true;
     statusText.innerText = "ПОЛУЧЕНИЕ КЛЮЧА...";
     statusBadge.className = "status-badge connecting";
@@ -455,8 +465,11 @@ async function connectVPN() {
             method: "POST",
             body: "{}"
         });
-        currentVlessUri = result.vless_uri || "";
-        if (!currentVlessUri) throw new Error("Backend не вернул VLESS URI");
+        const receivedVlessUri = result.vless_uri || "";
+        if (!window.SolVlessActions?.isVlessUri(receivedVlessUri)) {
+            throw new Error("Backend не вернул корректный VLESS URI");
+        }
+        currentVlessUri = receivedVlessUri;
         playConnectAnimation();
     } catch (error) {
         isConfigLoading = false;
@@ -549,25 +562,112 @@ function flashCity(cityId) {
 
 async function copyVlessKey() {
     if (!currentVlessUri) {
-        showToast("Сначала нажмите кнопку получения VPN", "error");
+        setVlessKeyStatus("missing");
+        showToast("Ключ не получен. Сначала получите VPN-конфигурацию", "error");
+        tg?.HapticFeedback?.notificationOccurred("error");
         return;
     }
+
+    if (vlessCopyInProgress) return;
+    vlessCopyInProgress = true;
+
+    copyKeyBtn?.setAttribute("disabled", "");
+    let result = { ok: false, method: "manual", reason: "copy_unavailable" };
     try {
-        await navigator.clipboard.writeText(currentVlessUri);
+        if (vlessClipboard) result = await vlessClipboard.copy(currentVlessUri);
+    } catch (_) {
+        result = { ok: false, method: "manual", reason: "copy_failed" };
+    } finally {
+        vlessCopyInProgress = false;
+        copyKeyBtn?.removeAttribute("disabled");
+    }
+
+    if (result.ok) {
+        setVlessKeyStatus("copied");
+        setVlessSheetStatus("copied");
         showToast("🔑 VLESS-ключ скопирован");
         tg?.HapticFeedback?.notificationOccurred("success");
-    } catch (_) {
-        // В некоторых WebView clipboard запрещён — показываем стандартный Telegram popup.
-        window.prompt("Скопируйте VLESS-ключ:", currentVlessUri);
+        uiScheduler.schedule("vless:status-reset", () => setVlessKeyStatus("ready"), 1600);
+        return;
+    }
+
+    setVlessKeyStatus("copy-error");
+    showVlessImport({ copyFailed: true });
+    showToast("Не удалось скопировать автоматически — выделите ключ вручную", "error");
+    tg?.HapticFeedback?.notificationOccurred("error");
+    uiScheduler.schedule("vless:status-reset", () => setVlessKeyStatus("ready"), 2200);
+}
+
+function setVlessKeyStatus(state) {
+    const states = {
+        missing: { text: "КЛЮЧ НЕ ПОЛУЧЕН", className: "disconnected" },
+        ready: { text: "КЛЮЧ ГОТОВ", className: "connected" },
+        copied: { text: "СКОПИРОВАНО", className: "copied" },
+        "copy-error": { text: "ОШИБКА КОПИРОВАНИЯ", className: "copy-error" }
+    };
+    const next = states[state] || states.missing;
+    if (statusText) statusText.innerText = next.text;
+    if (statusBadge) statusBadge.className = `status-badge ${next.className}`;
+}
+
+function setVlessSheetStatus(state) {
+    if (!vlessCopyStatus) return;
+    const states = {
+        ready: { text: "Ключ готов", className: "ready" },
+        copied: { text: "Скопировано", className: "copied" },
+        error: { text: "Ошибка копирования", className: "error" }
+    };
+    const next = states[state] || states.ready;
+    vlessCopyStatus.textContent = next.text;
+    vlessCopyStatus.className = `vless-sheet-status ${next.className}`;
+}
+
+function renderVlessImportInstructions() {
+    if (!vlessClientList || vlessClientList.childElementCount > 0) return;
+    const instructions = window.SolVlessActions?.getImportInstructions() || [];
+    instructions.forEach(item => {
+        const row = document.createElement("li");
+        const title = document.createElement("strong");
+        title.textContent = item.title;
+        row.append(title, document.createTextNode(item.text));
+        vlessClientList.appendChild(row);
+    });
+}
+
+function showVlessImport(options = {}) {
+    if (!currentVlessUri) {
+        setVlessKeyStatus("missing");
+        showToast("Ключ не получен. Сначала получите VPN-конфигурацию", "error");
+        tg?.HapticFeedback?.notificationOccurred("error");
+        return;
+    }
+    renderVlessImportInstructions();
+    if (vlessManualField) vlessManualField.value = currentVlessUri;
+    setVlessSheetStatus(options.copyFailed ? "error" : "ready");
+    vlessImportOverlay?.classList.add("visible");
+    vlessImportOverlay?.setAttribute("aria-hidden", "false");
+}
+
+function closeVlessImport() {
+    vlessImportOverlay?.classList.remove("visible");
+    vlessImportOverlay?.setAttribute("aria-hidden", "true");
+    if (vlessManualField) {
+        vlessManualField.blur();
+        vlessManualField.value = "";
     }
 }
 
-function openVlessKey() {
-    if (!currentVlessUri) {
-        showToast("Сначала получите VPN-конфигурацию", "error");
+function selectVlessKeyManually() {
+    if (!currentVlessUri || !vlessManualField) {
+        showVlessImport();
         return;
     }
-    window.location.href = currentVlessUri;
+    if (!vlessImportOverlay?.classList.contains("visible")) showVlessImport();
+    vlessManualField.focus();
+    vlessManualField.select();
+    vlessManualField.setSelectionRange(0, vlessManualField.value.length);
+    setVlessSheetStatus("ready");
+    tg?.HapticFeedback?.selectionChanged();
 }
 
 // ==========================================
@@ -1890,7 +1990,9 @@ function initActionHandlers() {
         try {
             switch (action) {
                 case "copy-vless-key": await copyVlessKey(); break;
-                case "open-vless-key": openVlessKey(); break;
+                case "show-vless-import": showVlessImport(); break;
+                case "close-vless-import": closeVlessImport(); break;
+                case "select-vless-key": selectVlessKeyManually(); break;
                 case "toggle-promo": togglePromoCard(); break;
                 case "apply-promo": await applyPromoCode(); break;
                 case "toggle-referral": toggleRefCard(); break;
@@ -1933,6 +2035,10 @@ function initActionHandlers() {
     });
 
     document.addEventListener("keydown", event => {
+        if (event.key === "Escape" && vlessImportOverlay?.classList.contains("visible")) {
+            closeVlessImport();
+            return;
+        }
         const target = event.target.closest('[role="button"][data-action]');
         if (!target || (event.key !== "Enter" && event.key !== " ")) return;
         event.preventDefault();
@@ -1968,6 +2074,8 @@ window.addEventListener("resize", () => {
 
 window.addEventListener("pagehide", event => {
     if (event.persisted) return;
+    closeVlessImport();
+    currentVlessUri = "";
     activeLaserAnim?.pause?.();
     clearActiveComets();
     faqAnimator?.destroy?.();

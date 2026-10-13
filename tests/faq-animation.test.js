@@ -5,8 +5,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const {
+    CHARACTER_TRANSITION_MS,
     characterDelay,
     createFaqAnimator,
+    phaseDuration,
     splitGraphemes,
     tokenizeFaqText
 } = require("../faq-animation.js");
@@ -197,6 +199,12 @@ test("long answers keep staggered delays through their final characters", () => 
     assert.equal(finalDelay, 360);
 });
 
+test("phase completes only after the final character transition", () => {
+    const count = 220;
+    assert.equal(phaseDuration(count), characterDelay(count - 1, count) + CHARACTER_TRANSITION_MS);
+    assert.equal(phaseDuration(count), 540);
+});
+
 test("animation renders individual characters and settles its height", () => {
     const { animator, box, container, scheduler } = createFixture();
     animator.show("Ключ готов");
@@ -233,13 +241,16 @@ test("page loads motion helpers before the cache-busted application bundle", () 
     const projectRoot = path.resolve(__dirname, "..");
     const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
     const app = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
-    const motionPosition = html.indexOf("ui-motion.js?v=5003");
-    const animatorPosition = html.indexOf("faq-animation.js?v=5003");
-    const appPosition = html.indexOf("app.js?v=5003");
+    const motionPosition = html.indexOf("ui-motion.js?v=5004");
+    const animatorPosition = html.indexOf("faq-animation.js?v=5004");
+    const vlessPosition = html.indexOf("vless-actions.js?v=5004");
+    const appPosition = html.indexOf("app.js?v=5004");
 
-    assert.ok(html.includes("style.css?v=5003"));
-    assert.ok(motionPosition >= 0 && motionPosition < animatorPosition && animatorPosition < appPosition);
+    assert.ok(html.includes("style.css?v=5004"));
+    assert.ok(motionPosition >= 0 && motionPosition < animatorPosition);
+    assert.ok(animatorPosition < vlessPosition && vlessPosition < appPosition);
     assert.equal(app.includes("word-glyph"), false);
     assert.equal(app.includes("dip-shrink"), false);
+    assert.equal(app.includes("window.location.href = currentVlessUri"), false);
     assert.equal(app.includes("Не заявлять ограничение"), false);
 });
