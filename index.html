@@ -506,11 +506,28 @@
 
             <div class="admin-card">
                 <div class="admin-card-title">👥 ВСЕ ПОЛЬЗОВАТЕЛИ</div>
+                <div class="admin-users-stats" aria-label="Статистика пользователей">
+                    <div class="admin-stat-card">
+                        <span>Всего пользователей</span>
+                        <strong id="admin-total-users">—</strong>
+                    </div>
+                    <div class="admin-stat-card active">
+                        <span>Активная подписка</span>
+                        <strong id="admin-active-users">—</strong>
+                        <small id="admin-active-percent"></small>
+                    </div>
+                </div>
                 <div class="promo-input-row" style="margin-bottom: 10px;">
-                    <input type="text" id="admin-search-user" placeholder="🔍 Поиск..." data-input-action="filter-users">
+                    <input type="search" id="admin-search-user" placeholder="🔍 ID, username или имя" data-input-action="filter-users" autocomplete="off">
                 </div>
 
-                <div class="all-users-scroll-list" id="all-users-container"></div>
+                <div class="all-users-scroll-list" id="all-users-container" role="list" aria-label="Пользователи"></div>
+                <div class="admin-users-state" id="admin-users-state" aria-live="polite"></div>
+                <div class="admin-users-pages">
+                    <button type="button" id="admin-users-prev" data-action="admin-users-prev">← Назад</button>
+                    <span id="admin-users-page">Страница 1</span>
+                    <button type="button" id="admin-users-next" data-action="admin-users-next">Далее →</button>
+                </div>
             </div>
         </div>
     </div>

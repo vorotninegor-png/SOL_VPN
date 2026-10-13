@@ -46,6 +46,14 @@ let touchStartXs = { days: 0, discount: 0, limit: 0 };
 let approvedUsers = [];
 let allUsersList = [];
 let adminPanelInitialized = false;
+const adminUsersPageSize = 30;
+let adminUsersPage = 0;
+let adminUsersFilteredTotal = 0;
+let adminUsersLoading = false;
+let adminUsersRequestId = 0;
+let adminUsersInitialized = false;
+let adminSearchTimer = null;
+const adminStatFrames = new WeakMap();
 let mainButtonInitialized = false;
 let referralLink = "";
 
@@ -126,9 +134,14 @@ function applyBootstrap(data) {
     }
 
     if (data.admin && isAdmin) {
-        allUsersList = Array.isArray(data.admin.users) ? data.admin.users : [];
         approvedUsers = Array.isArray(data.admin.approved_users) ? data.admin.approved_users : [];
-        renderAllUsersList();
+        renderAdminStats(data.admin);
+        if (!adminUsersInitialized) {
+            allUsersList = Array.isArray(data.admin.users) ? data.admin.users : [];
+            adminUsersFilteredTotal = Number(data.admin.filtered_users ?? data.admin.total_users ?? allUsersList.length);
+            adminUsersInitialized = true;
+            renderAllUsersList();
+        }
         renderApprovedUsersDrum();
     }
 
@@ -1044,6 +1057,7 @@ function initAdminPanel() {
         initCalcControls("days");
         initCalcControls("discount");
         initCalcControls("limit");
+        initAdminUsersScroll();
         adminPanelInitialized = true;
     }
 
@@ -1231,9 +1245,9 @@ async function addApprovedUser() {
             body: JSON.stringify({ username })
         });
         approvedUsers = result.admin.approved_users || [];
-        allUsersList = result.admin.users || [];
         renderApprovedUsersDrum();
-        renderAllUsersList();
+        renderAdminStats(result.admin);
+        await loadAdminUsers(adminUsersPage);
         input.value = "";
         showToast("⭐️ Пользователь добавлен в VIP");
     } catch (error) {
@@ -1248,9 +1262,9 @@ async function removeApprovedUser(userId) {
             body: JSON.stringify({ user_id: Number(userId) })
         });
         approvedUsers = result.admin.approved_users || [];
-        allUsersList = result.admin.users || [];
         renderApprovedUsersDrum();
-        renderAllUsersList();
+        renderAdminStats(result.admin);
+        await loadAdminUsers(adminUsersPage);
     } catch (error) {
         showToast(`🚨 ${error.message}`, "error");
     }
@@ -1262,56 +1276,184 @@ function escapeHtml(value) {
     }[ch]));
 }
 
-function filterAllUsersList() {
-    const searchInput = document.getElementById("admin-search-user");
-    const query = searchInput ? searchInput.value.toLowerCase().trim() : "";
-    renderAllUsersList(query);
-}
-
-
-function renderAllUsersList(filterQuery = "") {
-    const container = document.getElementById("all-users-container");
-    if (!container) return;
-    const query = String(filterQuery || "").toLowerCase();
-    const filtered = allUsersList.filter(u =>
-        String(u.name || "").toLowerCase().includes(query) ||
-        String(u.username || "").toLowerCase().includes(query) ||
-        String(u.user_id || "").includes(query)
-    );
-    if (!filtered.length) {
-        container.innerHTML = `<div class="empty-list-msg">Пользователи не найдены</div>`;
+function animateAdminStat(element, value) {
+    if (!element) return;
+    const previousFrame = adminStatFrames.get(element);
+    if (previousFrame) cancelAnimationFrame(previousFrame);
+    const target = Math.max(0, Number(value) || 0);
+    const previous = Number(element.dataset.value ?? target);
+    element.dataset.value = String(target);
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches || previous === target) {
+        element.textContent = target.toLocaleString("ru-RU");
         return;
     }
-    container.innerHTML = filtered.map(u => {
+    const started = performance.now();
+    const step = now => {
+        const progress = Math.min(1, (now - started) / 380);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        element.textContent = Math.round(previous + (target - previous) * eased).toLocaleString("ru-RU");
+        if (progress < 1) adminStatFrames.set(element, requestAnimationFrame(step));
+        else adminStatFrames.delete(element);
+    };
+    adminStatFrames.set(element, requestAnimationFrame(step));
+}
+
+function renderAdminStats(data) {
+    animateAdminStat(document.getElementById("admin-total-users"), data.total_users);
+    animateAdminStat(document.getElementById("admin-active-users"), data.active_users);
+    const percent = document.getElementById("admin-active-percent");
+    if (percent) percent.textContent = `${(Number(data.active_percent) || 0).toFixed(1)}% от всех`;
+    document.querySelector(".admin-users-stats")?.classList.add("ready");
+}
+
+function filterAllUsersList() {
+    clearTimeout(adminSearchTimer);
+    adminSearchTimer = setTimeout(() => loadAdminUsers(0), 250);
+}
+
+async function loadAdminUsers(page = 0) {
+    if (!isAdmin) return;
+    const query = document.getElementById("admin-search-user")?.value.trim() || "";
+    const requestId = ++adminUsersRequestId;
+    adminUsersLoading = true;
+    renderAdminUsersState();
+    try {
+        const params = new URLSearchParams({
+            limit: String(adminUsersPageSize),
+            offset: String(Math.max(0, page) * adminUsersPageSize),
+            q: query
+        });
+        const result = await apiFetch(`/api/admin/users?${params}`, { method: "GET" });
+        if (requestId !== adminUsersRequestId) return;
+        const users = Array.isArray(result.users) ? result.users : [];
+        const filtered = Number(result.filtered_users) || 0;
+        if (page > 0 && !users.length && filtered > 0) {
+            await loadAdminUsers(page - 1);
+            return;
+        }
+        allUsersList = users;
+        adminUsersPage = Math.max(0, page);
+        adminUsersFilteredTotal = filtered;
+        adminUsersInitialized = true;
+        approvedUsers = Array.isArray(result.approved_users) ? result.approved_users : approvedUsers;
+        renderAdminStats(result);
+        renderApprovedUsersDrum();
+        renderAllUsersList();
+        const container = document.getElementById("all-users-container");
+        if (container) {
+            container.scrollTop = 0;
+            container.classList.remove("expanded");
+        }
+    } catch (error) {
+        if (requestId === adminUsersRequestId) showToast(`🚨 ${error.message}`, "error");
+    } finally {
+        if (requestId === adminUsersRequestId) {
+            adminUsersLoading = false;
+            renderAdminUsersState();
+        }
+    }
+}
+
+function renderAdminUsersState() {
+    const status = document.getElementById("admin-users-state");
+    const pageLabel = document.getElementById("admin-users-page");
+    const previous = document.getElementById("admin-users-prev");
+    const next = document.getElementById("admin-users-next");
+    const shownFrom = adminUsersFilteredTotal ? adminUsersPage * adminUsersPageSize + 1 : 0;
+    const shownTo = adminUsersPage * adminUsersPageSize + allUsersList.length;
+    if (status) status.textContent = adminUsersLoading
+        ? "Загрузка пользователей…"
+        : `Показано ${shownFrom}–${shownTo} из ${adminUsersFilteredTotal}`;
+    if (pageLabel) pageLabel.textContent = `Страница ${adminUsersPage + 1}`;
+    if (previous) previous.disabled = adminUsersLoading || adminUsersPage === 0;
+    if (next) next.disabled = adminUsersLoading || shownTo >= adminUsersFilteredTotal;
+}
+
+function renderAllUsersList() {
+    const container = document.getElementById("all-users-container");
+    if (!container) return;
+    if (!allUsersList.length) {
+        container.innerHTML = `<div class="empty-list-msg">Пользователи не найдены</div>`;
+        renderAdminUsersState();
+        return;
+    }
+    container.innerHTML = allUsersList.map(u => {
         const statusTxt = u.hasSub ? "ПОДПИСКА АКТИВНА" : "НЕТ ПОДПИСКИ";
         const statusColor = u.hasSub ? "sub-on" : "sub-off";
         const subscriptionEnd = u.subscription_end || "—";
         const registered = u.registration_date || "—";
-        const vpnKey = u.vpn_key || "ещё не выдан";
+        const vpnKey = u.vpn_key || "Нет ключа";
         const referrer = u.referrer_id ?? "—";
+        const userId = Number(u.user_id);
         return `
-            <div class="user-row-card ${u.hasSub ? "active-sub" : ""}" data-action="toggle-gift-drawer">
-                <div class="user-row-main">
-                    <div class="user-row-name">${escapeHtml(u.name)} ${escapeHtml(u.username)}</div>
-                    <div class="user-row-status ${statusColor}">${statusTxt}</div>
-                </div>
-                <div class="user-row-meta">
-                    <span>ID: ${Number(u.user_id)}</span>
-                    <span>Регистрация: ${escapeHtml(registered)}</span>
-                    <span>Окончание: ${escapeHtml(subscriptionEnd)}</span>
-                    <span>VIP: ${u.isVip ? "да" : "нет"}</span>
-                    <span>VPN UUID: ${escapeHtml(vpnKey)}</span>
-                    <span>Реферер: ${escapeHtml(referrer)}</span>
-                </div>
-                <div class="user-gift-drawer">
-                    <button class="gift-btn" type="button" data-action="gift-promo" data-user-id="${Number(u.user_id)}" data-username="${escapeHtml(u.username)}">🎁 ПОДАРИТЬ ПРОМОКОД</button>
+            <div class="user-row-card ${u.hasSub ? "active-sub" : ""}" role="listitem">
+                <button class="user-row-toggle" type="button" data-action="toggle-user-details"
+                        aria-expanded="false" aria-controls="admin-user-details-${userId}">
+                    <div class="user-row-main">
+                        <div class="user-row-name">${escapeHtml(u.name)} ${u.username ? `· @${escapeHtml(u.username)}` : ""}</div>
+                        <div class="user-row-status ${statusColor}">${statusTxt}</div>
+                    </div>
+                    <div class="user-row-summary">ID: ${userId} · ${u.isVip ? "VIP · " : ""}${u.vpn_key ? "Ключ создан" : "Нет ключа"}</div>
+                </button>
+                <div class="user-row-details" id="admin-user-details-${userId}" aria-hidden="true" inert>
+                    <div class="user-row-details-inner">
+                        <div class="user-row-meta">
+                            <span>Регистрация: ${escapeHtml(registered)}</span>
+                            <span>Подписка до: ${escapeHtml(subscriptionEnd)}</span>
+                            <span>VIP: ${u.isVip ? "да" : "нет"}</span>
+                            <span>VPN UUID: ${escapeHtml(vpnKey)}</span>
+                            <span>Реферер: ${escapeHtml(referrer)}</span>
+                        </div>
+                        <div class="user-gift-drawer">
+                            <button class="gift-btn" type="button" data-action="gift-promo" data-user-id="${userId}" data-username="${escapeHtml(u.username)}">🎁 ПОДАРИТЬ ПРОМОКОД</button>
+                        </div>
+                    </div>
                 </div>
             </div>`;
     }).join("");
+    renderAdminUsersState();
 }
 
-function toggleGiftDrawer(cardEl) {
-    cardEl.classList.toggle("open-gift");
+function toggleUserDetails(button) {
+    const card = button.closest(".user-row-card");
+    const details = card?.querySelector(".user-row-details");
+    if (!card || !details) return;
+    const open = !card.classList.contains("expanded");
+    card.classList.toggle("expanded", open);
+    button.setAttribute("aria-expanded", String(open));
+    details.setAttribute("aria-hidden", String(!open));
+    details.toggleAttribute("inert", !open);
+}
+
+function initAdminUsersScroll() {
+    const container = document.getElementById("all-users-container");
+    if (!container) return;
+    let touchStartY = 0;
+    let lastScrollTop = 0;
+    let wheelIntent = 0;
+    const canExpand = () => container.scrollHeight > 212;
+    const expand = () => { if (canExpand()) container.classList.add("expanded"); };
+    const collapse = () => { if (container.scrollTop <= 2) container.classList.remove("expanded"); };
+
+    container.addEventListener("wheel", event => {
+        wheelIntent = Math.sign(event.deltaY) === Math.sign(wheelIntent)
+            ? wheelIntent + event.deltaY : event.deltaY;
+        if (wheelIntent > 18) { expand(); wheelIntent = 0; }
+        if (wheelIntent < -28 && container.scrollTop <= 2) { collapse(); wheelIntent = 0; }
+    }, { passive: true });
+    container.addEventListener("touchstart", event => {
+        touchStartY = event.touches[0].clientY;
+    }, { passive: true });
+    container.addEventListener("touchmove", event => {
+        const movement = event.touches[0].clientY - touchStartY;
+        if (movement < -28 && !container.classList.contains("expanded")) expand();
+        if (movement > 42 && container.scrollTop <= 2) collapse();
+    }, { passive: true });
+    container.addEventListener("scroll", () => {
+        if (container.classList.contains("expanded") && container.scrollTop <= 2 && lastScrollTop > 18) collapse();
+        lastScrollTop = container.scrollTop;
+    }, { passive: true });
+    window.addEventListener("resize", () => { if (!canExpand()) collapse(); });
 }
 
 async function giftPromoToUser(userId, username) {
@@ -1498,6 +1640,9 @@ function switchNav(index, screenId) {
     if (screenId === 'info') {
         setTimeout(() => { animateDipText(defaultInfoText); }, 100);
     }
+    if (screenId === 'admin' && isAdmin) {
+        loadAdminUsers(adminUsersPage);
+    }
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
 }
 
@@ -1568,7 +1713,9 @@ function initActionHandlers() {
                 case "create-admin-promo": await createAdminPromo(); break;
                 case "add-vip-user": await addApprovedUser(); break;
                 case "remove-vip-user": await removeApprovedUser(Number(target.dataset.userId)); break;
-                case "toggle-gift-drawer": toggleGiftDrawer(target); break;
+                case "toggle-user-details": toggleUserDetails(target); break;
+                case "admin-users-prev": await loadAdminUsers(adminUsersPage - 1); break;
+                case "admin-users-next": await loadAdminUsers(adminUsersPage + 1); break;
                 case "gift-promo":
                     event.stopPropagation();
                     await giftPromoToUser(Number(target.dataset.userId), target.dataset.username || "");
