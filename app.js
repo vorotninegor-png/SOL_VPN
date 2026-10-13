@@ -39,9 +39,14 @@ let caughtCount = 0;
 
 let adminPromoTypes = { days: false, discount: false };
 let adminPickedTariffs = { 1: false, 3: false, 6: false, 12: false };
-let adminLimitType = "lifetime_days";
-let calcValues = { days: 7, discount: 30, limit: 13 };
-let touchStartXs = { days: 0, discount: 0, limit: 0 };
+let calcValues = { days: 7, discount: 30 };
+let touchStartXs = { days: 0, discount: 0 };
+let adminPromoPreview = null;
+let adminPromoCreating = false;
+let adminPromoPage = 0;
+let adminPromoTotal = 0;
+let adminPromoRequestId = 0;
+let adminPromoSearchTimer = null;
 
 let approvedUsers = [];
 let allUsersList = [];
@@ -1056,9 +1061,9 @@ function initAdminPanel() {
     if (!adminPanelInitialized) {
         initCalcControls("days");
         initCalcControls("discount");
-        initCalcControls("limit");
         initAdminUsersScroll();
         adminPanelInitialized = true;
+        loadAdminPromos();
     }
 
     renderApprovedUsersDrum();
@@ -1068,6 +1073,7 @@ function initAdminPanel() {
 
 function toggleAdminPromoType(type) {
     adminPromoTypes[type] = !adminPromoTypes[type];
+    invalidateAdminPromoPreview();
     
     const btnDays = document.getElementById("btn-mode-days");
     const btnDiscount = document.getElementById("btn-mode-discount");
@@ -1101,31 +1107,13 @@ function toggleAdminPromoType(type) {
 function toggleAdminTariffPick(m) {
     if (!adminPromoTypes.discount) return;
     adminPickedTariffs[m] = !adminPickedTariffs[m];
+    invalidateAdminPromoPreview();
     const btn = document.getElementById(`p-tariff-${m}m`);
     if (btn) {
         if (adminPickedTariffs[m]) btn.classList.add("selected");
         else btn.classList.remove("selected");
     }
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
-}
-
-function setAdminLimitType(type) {
-    adminLimitType = type;
-    const btnDays = document.getElementById("btn-limit-days");
-    const btnCount = document.getElementById("btn-limit-count");
-    const limitTitle = document.getElementById("limit-calc-title");
-
-    if (type === 'lifetime_days') {
-        if (btnDays) btnDays.className = "admin-type-btn sub-mode active-green";
-        if (btnCount) btnCount.className = "admin-type-btn sub-mode";
-        if (limitTitle) limitTitle.innerText = "ВЫБЕРИТЕ СРОК ЖИЗНИ (ДНИ)";
-    } else {
-        if (btnDays) btnDays.className = "admin-type-btn sub-mode";
-        if (btnCount) btnCount.className = "admin-type-btn sub-mode active-green";
-        if (limitTitle) limitTitle.innerText = "ВЫБЕРИТЕ КОЛИЧЕСТВО АКТИВАЦИЙ";
-    }
-    updateCalcDisplays();
-    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
 function updateCalcDisplays() {
@@ -1137,9 +1125,6 @@ function updateCalcDisplays() {
     calcValues.discount = Math.max(1, Math.min(maxDiscount, calcValues.discount));
     renderSingleSpinner('discount', calcValues.discount, maxDiscount);
 
-    let maxLimit = (adminLimitType === 'lifetime_days') ? 31 : 1000;
-    calcValues.limit = Math.max(1, Math.min(maxLimit, calcValues.limit));
-    renderSingleSpinner('limit', calcValues.limit, maxLimit);
 }
 
 function renderSingleSpinner(key, val, maxVal) {
@@ -1157,6 +1142,7 @@ function changeCalcVal(key, delta) {
     if (key === 'discount' && !adminPromoTypes.discount) return;
 
     calcValues[key] += delta;
+    invalidateAdminPromoPreview();
     updateCalcDisplays();
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
 }
@@ -1187,34 +1173,136 @@ function initCalcControls(key) {
     }, { passive: true });
 }
 
-async function createAdminPromo() {
-    const input = document.getElementById("admin-promo-name");
-    if (!input) return;
-    const code = input.value.trim().toUpperCase();
-    if (!code) return showToast("🚨 Введите название промокода", "error");
-    if (!adminPromoTypes.days && !adminPromoTypes.discount) return showToast("🚨 Выберите дни и/или скидку", "error");
+function invalidateAdminPromoPreview() {
+    adminPromoPreview = null;
+    const preview = document.getElementById("admin-promo-preview");
+    const confirmButton = document.getElementById("admin-promo-confirm");
+    if (preview) preview.hidden = true;
+    if (confirmButton) confirmButton.hidden = true;
+}
 
-    const tariffs = Object.entries(adminPickedTariffs)
-        .filter(([, picked]) => picked)
-        .map(([months]) => Number(months));
+function buildAdminPromoDraft() {
+    const code = document.getElementById("admin-promo-name")?.value.trim().toUpperCase() || "";
+    if (!/^[A-Z0-9_-]{3,32}$/.test(code)) throw new Error("Код: 3–32 символа A–Z, 0–9, _ или -");
+    if (!adminPromoTypes.days && !adminPromoTypes.discount) throw new Error("Выберите дни и/или скидку");
+    const days = adminPromoTypes.days ? calcValues.days : 0;
+    const discount = adminPromoTypes.discount ? calcValues.discount : 0;
+    if (adminPromoTypes.days && (!Number.isInteger(days) || days < 1 || days > 3650)) throw new Error("Дни: от 1 до 3650");
+    if (adminPromoTypes.discount && (!Number.isInteger(discount) || discount < 1 || discount > 95)) throw new Error("Скидка: от 1 до 95%");
+    const tariffs = Object.entries(adminPickedTariffs).filter(([, picked]) => picked).map(([months]) => Number(months));
+    const maxText = document.getElementById("admin-promo-max")?.value.trim() || "";
+    if (maxText && !/^\d+$/.test(maxText)) throw new Error("Лимит активаций должен быть целым числом");
+    const maxActivations = maxText ? Number(maxText) : null;
+    if (maxActivations !== null && (!Number.isInteger(maxActivations) || maxActivations < 1 || maxActivations > 10000)) {
+        throw new Error("Лимит активаций: от 1 до 10000");
+    }
+    const expiryText = document.getElementById("admin-promo-expires")?.value || "";
+    const expiry = expiryText ? new Date(expiryText) : null;
+    if (expiry && (!Number.isFinite(expiry.getTime()) || expiry <= new Date())) throw new Error("Выберите будущую дату окончания");
+    if (!maxActivations && !expiry) throw new Error("Укажите срок действия и/или лимит активаций");
+    return {
+        code, has_days: adminPromoTypes.days, days_val: days,
+        has_discount: adminPromoTypes.discount, discount_val: discount,
+        tariffs, max_activations: maxActivations,
+        expires_at: expiry ? expiry.toISOString() : null
+    };
+}
 
+function previewAdminPromo() {
     try {
-        const result = await apiFetch("/api/admin/promocodes", {
-            method: "POST",
-            body: JSON.stringify({
-                code,
-                has_days: adminPromoTypes.days,
-                days_val: calcValues.days,
-                has_discount: adminPromoTypes.discount,
-                discount_val: calcValues.discount,
-                tariffs,
-                limit_type: adminLimitType,
-                limit_val: calcValues.limit
-            })
-        });
-        input.value = "";
+        const draft = buildAdminPromoDraft();
+        adminPromoPreview = JSON.stringify(draft);
+        const preview = document.getElementById("admin-promo-preview");
+        const confirmButton = document.getElementById("admin-promo-confirm");
+        if (preview) {
+            const bonus = [draft.has_days ? `${draft.days_val} дней` : "", draft.has_discount ? `${draft.discount_val}% скидки` : ""].filter(Boolean).join(" + ");
+            preview.textContent = `Промокод: ${draft.code}\nБонус: ${bonus}\nТарифы: ${draft.has_discount ? (draft.tariffs.length ? draft.tariffs.map(m => `${m} мес.`).join(", ") : "все тарифы") : "не применяются"}\nЛимит: ${draft.max_activations ?? "без ограничения"}\nДействует до: ${draft.expires_at ? new Date(draft.expires_at).toLocaleString("ru-RU") : "без срока"}\nСтатус: готов к созданию`;
+            preview.hidden = false;
+        }
+        if (confirmButton) confirmButton.hidden = false;
+    } catch (error) {
+        invalidateAdminPromoPreview();
+        showToast(`🚨 ${error.message}`, "error");
+    }
+}
+
+async function createAdminPromo() {
+    if (adminPromoCreating || !adminPromoPreview) return;
+    let draft;
+    try {
+        draft = buildAdminPromoDraft();
+        if (JSON.stringify(draft) !== adminPromoPreview) throw new Error("Параметры изменились — проверьте промокод ещё раз");
+    } catch (error) {
+        invalidateAdminPromoPreview();
+        showToast(`🚨 ${error.message}`, "error");
+        return;
+    }
+    adminPromoCreating = true;
+    const button = document.getElementById("admin-promo-confirm");
+    if (button) { button.disabled = true; button.textContent = "СОЗДАЁМ…"; }
+    try {
+        const result = await apiFetch("/api/admin/promocodes", { method: "POST", body: JSON.stringify(draft) });
+        document.getElementById("admin-promo-name").value = "";
+        invalidateAdminPromoPreview();
+        await loadAdminPromos(0);
         showToast(`🎉 Промокод ${result.code} сохранён`);
         tg?.HapticFeedback?.notificationOccurred("success");
+    } catch (error) {
+        showToast(`🚨 ${error.message}`, "error");
+    } finally {
+        adminPromoCreating = false;
+        if (button) { button.disabled = false; button.textContent = "ПОДТВЕРДИТЬ СОЗДАНИЕ"; }
+    }
+}
+
+function filterAdminPromos() {
+    clearTimeout(adminPromoSearchTimer);
+    adminPromoSearchTimer = setTimeout(() => loadAdminPromos(0), 250);
+}
+
+async function loadAdminPromos(page = 0) {
+    if (!isAdmin) return;
+    const requestId = ++adminPromoRequestId;
+    const query = document.getElementById("admin-promo-search")?.value.trim() || "";
+    try {
+        const params = new URLSearchParams({ limit: "30", offset: String(Math.max(0, page) * 30), q: query });
+        const result = await apiFetch(`/api/admin/promocodes?${params}`, { method: "GET" });
+        if (requestId !== adminPromoRequestId) return;
+        const promos = Array.isArray(result.promocodes) ? result.promocodes : [];
+        if (page > 0 && !promos.length && result.total > 0) return loadAdminPromos(page - 1);
+        adminPromoPage = Math.max(0, page);
+        adminPromoTotal = Number(result.total) || 0;
+        const list = document.getElementById("admin-promos-list");
+        if (list) list.innerHTML = promos.length ? promos.map(p => {
+            const bonus = [p.days ? `${p.days} дн.` : "", p.discount_percent ? `${p.discount_percent}%` : ""].filter(Boolean).join(" + ");
+            const selectedTariffs = Array.isArray(p.tariffs) ? p.tariffs : [];
+            const tariffs = p.discount_percent ? (selectedTariffs.length ? selectedTariffs.join(", ") + " мес." : "все тарифы") : "—";
+            const labels = { active: "Активен", expired: "Истёк", exhausted: "Лимит исчерпан", disabled: "Отключён", invalid: "Некорректен" };
+            return `<div class="admin-promo-item"><div><strong>${escapeHtml(p.code)}</strong> <span class="admin-promo-status ${escapeHtml(p.status)}">${labels[p.status] || "Неизвестно"}</span></div>
+                <div>Бонус: ${escapeHtml(bonus || "—")} · Тарифы: ${escapeHtml(tariffs)}</div>
+                <div>Активации: ${Number(p.used_count)}/${p.max_activations ?? "∞"}</div>
+                <div>Создан: ${escapeHtml(p.created_at || "—")} · До: ${escapeHtml(p.expires_at || "—")} UTC</div>
+                ${p.status !== "disabled" ? `<button type="button" data-action="disable-admin-promo" data-code="${escapeHtml(p.code)}">Отключить</button>` : ""}</div>`;
+        }).join("") : `<div class="empty-list-msg">Промокоды не найдены</div>`;
+        const state = document.getElementById("admin-promos-state");
+        if (state) state.textContent = `Показано ${adminPromoTotal ? adminPromoPage * 30 + 1 : 0}–${adminPromoPage * 30 + promos.length} из ${adminPromoTotal}`;
+        const pageLabel = document.getElementById("admin-promos-page");
+        if (pageLabel) pageLabel.textContent = `Страница ${adminPromoPage + 1}`;
+        const prev = document.getElementById("admin-promos-prev");
+        const next = document.getElementById("admin-promos-next");
+        if (prev) prev.disabled = adminPromoPage === 0;
+        if (next) next.disabled = (adminPromoPage + 1) * 30 >= adminPromoTotal;
+    } catch (error) {
+        showToast(`🚨 ${error.message}`, "error");
+    }
+}
+
+async function disableAdminPromo(code) {
+    if (!window.confirm(`Отключить промокод ${code}? История активаций сохранится.`)) return;
+    try {
+        await apiFetch(`/api/admin/promocodes/${encodeURIComponent(code)}/disable`, { method: "POST" });
+        await loadAdminPromos(adminPromoPage);
+        showToast(`Промокод ${code} отключён`);
     } catch (error) {
         showToast(`🚨 ${error.message}`, "error");
     }
@@ -1642,6 +1730,7 @@ function switchNav(index, screenId) {
     }
     if (screenId === 'admin' && isAdmin) {
         loadAdminUsers(adminUsersPage);
+        loadAdminPromos(adminPromoPage);
     }
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
 }
@@ -1709,8 +1798,11 @@ function initActionHandlers() {
                 case "toggle-admin-promo-type": toggleAdminPromoType(target.dataset.type); break;
                 case "change-calc": changeCalcVal(target.dataset.key, Number(target.dataset.delta)); break;
                 case "toggle-admin-tariff": toggleAdminTariffPick(Number(target.dataset.months)); break;
-                case "set-admin-limit": setAdminLimitType(target.dataset.limitType); break;
+                case "preview-admin-promo": previewAdminPromo(); break;
                 case "create-admin-promo": await createAdminPromo(); break;
+                case "admin-promos-prev": await loadAdminPromos(adminPromoPage - 1); break;
+                case "admin-promos-next": await loadAdminPromos(adminPromoPage + 1); break;
+                case "disable-admin-promo": await disableAdminPromo(target.dataset.code || ""); break;
                 case "add-vip-user": await addApprovedUser(); break;
                 case "remove-vip-user": await removeApprovedUser(Number(target.dataset.userId)); break;
                 case "toggle-user-details": toggleUserDetails(target); break;
@@ -1731,6 +1823,8 @@ function initActionHandlers() {
 
     document.addEventListener("input", event => {
         if (event.target.matches('[data-input-action="filter-users"]')) filterAllUsersList();
+        if (event.target.matches('[data-input-action="filter-promos"]')) filterAdminPromos();
+        if (event.target.matches('#admin-promo-name, #admin-promo-max, #admin-promo-expires')) invalidateAdminPromoPreview();
     });
 }
 

@@ -908,6 +908,32 @@ body {
     transition: transform 0.15s ease;
 }
 .admin-action-submit:active { transform: scale(0.96); }
+.admin-action-submit:disabled { opacity: 0.55; cursor: wait; }
+.admin-promo-hint { margin: 8px 1px 0; color: rgba(255,255,255,0.5); font-size: 10px; line-height: 1.4; }
+.admin-promo-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+.admin-promo-limits label { color: rgba(255,255,255,0.7); font-size: 10px; line-height: 1.4; }
+.admin-promo-limits input {
+    box-sizing: border-box; width: 100%; margin-top: 5px; padding: 8px 6px;
+    border: 1px solid rgba(168,85,247,0.4); border-radius: 9px;
+    background: rgba(15,20,38,0.9); color: #fff; font-size: 11px; color-scheme: dark;
+}
+.admin-promo-preview {
+    margin-top: 10px; padding: 12px; white-space: pre-line; line-height: 1.5;
+    border: 1px solid rgba(16,185,129,0.45); border-radius: 12px;
+    background: rgba(16,185,129,0.08); color: #d1fae5; font-size: 11px;
+}
+.admin-promo-confirm { background: linear-gradient(135deg, #7c3aed, #5b21b6); }
+.admin-promos-list { display: flex; flex-direction: column; gap: 8px; max-height: 310px; overflow-y: auto; margin-top: 10px; }
+.admin-promo-item {
+    padding: 10px; border: 1px solid rgba(255,255,255,0.09); border-radius: 11px;
+    background: rgba(255,255,255,0.025); color: rgba(255,255,255,0.65);
+    font-size: 10px; line-height: 1.5; overflow-wrap: anywhere;
+}
+.admin-promo-item strong { color: #fff; font-size: 12px; }
+.admin-promo-item button { margin-top: 7px; padding: 5px 8px; border: 1px solid rgba(239,68,68,0.45); border-radius: 8px; background: rgba(239,68,68,0.08); color: #fca5a5; font-size: 10px; }
+.admin-promo-status { margin-left: 5px; color: #86efac; }
+.admin-promo-status.expired, .admin-promo-status.exhausted, .admin-promo-status.disabled, .admin-promo-status.invalid { color: #fca5a5; }
+@media (max-width: 350px) { .admin-promo-limits { grid-template-columns: 1fr; } }
 
 .drum-list-viewport {
     max-height: 120px; overflow-y: auto;

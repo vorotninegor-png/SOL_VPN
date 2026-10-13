@@ -450,43 +450,32 @@
                         12 МЕС
                     </button>
                 </div>
+                <p class="admin-promo-hint">Если не выбрать тариф, скидка действует на все тарифы.</p>
 
-                <div class="admin-toggle-row" style="margin-top: 12px;">
-                    <button class="admin-type-btn sub-mode active-green" id="btn-limit-days" data-action="set-admin-limit" data-limit-type="lifetime_days">
-                        <div class="hitbox-overlay"></div>
-                        ⏳ ДНИ ЖИЗНИ
-                    </button>
-                    <button class="admin-type-btn sub-mode" id="btn-limit-count" data-action="set-admin-limit" data-limit-type="activations">
-                        <div class="hitbox-overlay"></div>
-                        👥 АКТИВАЦИИ
-                    </button>
+                <div class="admin-promo-limits">
+                    <label>Максимум активаций <input type="number" id="admin-promo-max" min="1" max="10000" step="1" placeholder="Не ограничивать"></label>
+                    <label>Действует до <input type="datetime-local" id="admin-promo-expires"></label>
                 </div>
+                <p class="admin-promo-hint">Укажите хотя бы одно ограничение. Время — местное, на сервер отправляется UTC.</p>
 
-                <div class="calc-widget-container active-green-block" id="block-limit">
-                    <span class="calc-label" id="limit-calc-title">ВЫБЕРИТЕ СРОК ЖИЗНИ (ДНИ)</span>
-                    <div class ="calc-control-bar">
-                        <button class="calc-step-btn" data-action="change-calc" data-key="limit" data-delta="-1">
-                            <div class="hitbox-overlay"></div>
-                            −
-                        </button>
-                        <div class="calc-horizontal-viewport" id="touch-area-limit">
-                            <div class="calc-horizontal-track">
-                                <span class="calc-num side" id="limit-prev">12</span>
-                                <span class="calc-num active" id="limit-center">13</span>
-                                <span class="calc-num side" id="limit-next">14</span>
-                            </div>
-                        </div>
-                        <button class="calc-step-btn" data-action="change-calc" data-key="limit" data-delta="1">
-                            <div class="hitbox-overlay"></div>
-                            +
-                        </button>
-                    </div>
-                </div>
-
-                <button class="admin-action-submit" data-action="create-admin-promo">
+                <button class="admin-action-submit" type="button" data-action="preview-admin-promo">
                     <div class="hitbox-overlay"></div>
-                    СОХРАНИТЬ ПРОМОКОД
+                    ПРЕДПРОСМОТР
                 </button>
+                <div class="admin-promo-preview" id="admin-promo-preview" hidden></div>
+                <button class="admin-action-submit admin-promo-confirm" id="admin-promo-confirm" type="button" data-action="create-admin-promo" hidden>ПОДТВЕРДИТЬ СОЗДАНИЕ</button>
+            </div>
+
+            <div class="admin-card">
+                <div class="admin-card-title">🎟 СОЗДАННЫЕ ПРОМОКОДЫ</div>
+                <div class="promo-input-row"><input type="search" id="admin-promo-search" data-input-action="filter-promos" placeholder="Поиск по коду" autocomplete="off"></div>
+                <div class="admin-promos-list" id="admin-promos-list"></div>
+                <div class="admin-users-state" id="admin-promos-state" aria-live="polite"></div>
+                <div class="admin-users-pages">
+                    <button type="button" id="admin-promos-prev" data-action="admin-promos-prev">← Назад</button>
+                    <span id="admin-promos-page">Страница 1</span>
+                    <button type="button" id="admin-promos-next" data-action="admin-promos-next">Далее →</button>
+                </div>
             </div>
 
             <div class="admin-card">
