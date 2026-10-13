@@ -15,7 +15,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=5001">
+    <link rel="stylesheet" href="style.css?v=5002">
 
     <style>
         /* 🚨 МАКСИМАЛЬНЫЙ ПРИОРИТЕТ ДЛЯ ХИТБОКСОВ СЛОЕВ ВЕРСТКИ 🚨 */
@@ -324,7 +324,7 @@
                 <span class="term-dot green"></span>
                 <span class="term-title">SOL_ASSISTANT_TERMINAL v2.5</span>
             </div>
-            <div class="terminal-body" id="terminal-text"></div>
+            <div class="terminal-body" id="terminal-text" aria-live="polite" aria-atomic="true"></div>
         </div>
 
         <div class="faq-questions-scroll">
@@ -334,7 +334,7 @@
             </button>
             <button class="faq-btn" data-action="answer-faq" data-faq-id="2">
                 <div class="hitbox-overlay"></div>
-                🔑 Где взять VLESS ключ?
+                🔑 Где взять VLESS-ключ?
             </button>
             <button class="faq-btn" data-action="answer-faq" data-faq-id="3">
                 <div class="hitbox-overlay"></div>
@@ -346,7 +346,7 @@
             </button>
             <button class="faq-btn" data-action="answer-faq" data-faq-id="5">
                 <div class="hitbox-overlay"></div>
-                📈 Как поднять % рефералки?
+                📈 Как увеличить реферальный процент?
             </button>
             <button class="faq-btn" data-action="answer-faq" data-faq-id="6">
                 <div class="hitbox-overlay"></div>
@@ -561,6 +561,7 @@
 </div>
 
 <script src="config.js?v=1"></script>
-<script src="app.js?v=5001"></script>
+<script src="faq-animation.js?v=5002"></script>
+<script src="app.js?v=5002"></script>
 </body>
 </html>

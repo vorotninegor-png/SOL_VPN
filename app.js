@@ -1569,46 +1569,31 @@ async function giftPromoToUser(userId, username) {
 const defaultInfoText = "Нажмите на любой вопрос ниже. Ваш ответ появится здесь. Если нужной темы нет — напишите в нашу техподдержку.";
 
 const faqAnswers = {
-    1: "На вкладке Тоннель нажмите кнопку: Mini App запросит персональный VLESS-конфиг у вашего backend/Xray. Сам системный VPN затем включается в Happ, Hiddify, v2rayNG или другом клиенте.",
-    2: "После получения конфига нажмите Скопировать ключ VLESS и импортируйте его в Happ, Hiddify, v2rayNG или другой VLESS-клиент.",
-    3: "⚡️ Скорость и задержка зависят от VPS, маршрута, нагрузки и провайдера. Mini App не измеряет пропускную способность туннеля.",
-    4: "📱 VLESS-ключ персональный. Ограничение числа одновременных устройств пока не контролируется backend, поэтому не передавайте ключ другим.",
-    5: "📈 Чтобы увеличить процент реферальной программы перейдите во вкладку 'Игры', запускайте сканирование радара и ловите скоростные кометы!",
-    6: "🚫 Доступ к Охоте на кометы заблокирован, если у вас нет активной подписки VPN. Приобретите любой тариф на вкладке Кабинет.",
-    7: "☄️ Кометы пролетают через зону действия космического радара. Успейте кликнуть по комете, чтобы выбить бонус!",
-    8: "🌐 Да, VLESS работает на смартфонах, ПК (Windows/macOS/Linux) и роутерах Keenetic!"
+    1: "Откройте вкладку «Тоннель», нажмите на основную кнопку и дождитесь статуса «Ключ готов». Затем скопируйте персональный VLESS-ключ и импортируйте его в совместимое VPN-приложение.",
+    2: "После получения конфигурации во вкладке «Тоннель» нажмите кнопку «Копировать». Ключ будет доступен для импорта в VPN-клиент.",
+    3: "Скорость и задержка зависят от сервера, его нагрузки, маршрута подключения, оператора связи и других сетевых факторов. Конкретная скорость не гарантируется.",
+    4: "Сейчас один VLESS-ключ технически может использоваться на нескольких устройствах. Строгое серверное ограничение количества устройств пока не реализовано. Не заявлять ограничение «одно устройство» до появления соответствующего механизма.",
+    5: "Откройте вкладку «Игры», запускайте космический радар и ловите кометы. За определённые награды можно увеличивать реферальный процент. Максимальное значение — 40%.",
+    6: "Для доступа к играм требуется активная подписка SOL VPN. Выберите подходящий тариф во вкладке «Кабинет».",
+    7: "Запустите сканирование космического радара и нажимайте на пролетающие кометы, пока они находятся на экране.",
+    8: "VLESS поддерживается совместимыми клиентскими приложениями на разных операционных системах. На роутерах работа зависит от модели, прошивки и доступных компонентов."
 };
+
+const faqAnimator = window.SolFaqAnimation
+    ? window.SolFaqAnimation.createFaqAnimator({
+        container: document.getElementById("terminal-text"),
+        box: document.getElementById("terminal-box-element")
+    })
+    : null;
 
 function animateDipText(newText) {
     const container = document.getElementById("terminal-text");
     if (!container) return;
-
-    const currentWords = container.querySelectorAll(".word-glyph");
-
-    if (currentWords.length > 0) {
-        currentWords.forEach((word, idx) => {
-            setTimeout(() => { if (word) word.classList.add("dip-shrink"); }, idx * 12);
-        });
-        setTimeout(() => { renderNewWordsWithExpand(newText); }, currentWords.length * 12 + 160);
-    } else {
-        renderNewWordsWithExpand(newText);
+    if (faqAnimator) {
+        faqAnimator.show(newText);
+        return;
     }
-}
-
-function renderNewWordsWithExpand(text) {
-    const container = document.getElementById("terminal-text");
-    if (!container) return;
-
-    container.innerHTML = "";
-    const words = text.split(" ");
-
-    words.forEach((word, idx) => {
-        const span = document.createElement("span");
-        span.className = "word-glyph dip-shrink";
-        span.innerText = word;
-        container.appendChild(span);
-        setTimeout(() => { if (span) span.classList.remove("dip-shrink"); }, 40 + idx * 20);
-    });
+    container.textContent = newText;
 }
 
 function answerFAQ(id) {
@@ -1726,7 +1711,7 @@ function switchNav(index, screenId) {
         checkGameLockStatus();
     }
     if (screenId === 'info') {
-        setTimeout(() => { animateDipText(defaultInfoText); }, 100);
+        animateDipText(defaultInfoText);
     }
     if (screenId === 'admin' && isAdmin) {
         loadAdminUsers(adminUsersPage);
