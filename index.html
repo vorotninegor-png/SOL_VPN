@@ -15,7 +15,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=5004">
+    <link rel="stylesheet" href="style.css?v=5005">
 
     <style>
         /* 🚨 МАКСИМАЛЬНЫЙ ПРИОРИТЕТ ДЛЯ ХИТБОКСОВ СЛОЕВ ВЕРСТКИ 🚨 */
@@ -218,46 +218,58 @@
 
             <div class="tariffs-flow-container hidden-flow" id="tariffs-flow" aria-hidden="true">
                 <div class="tariffs-grid">
-                    <div class="tariff-card" id="tariff-1m" data-action="select-tariff" data-months="1">
+                    <div class="tariff-card" id="tariff-1m" data-action="select-tariff" data-months="1" role="button" tabindex="0" aria-pressed="false">
                         <div class="hitbox-overlay"></div>
                         <div>
                             <div class="tariff-title">1 МЕСЯЦ</div>
                             <div class="tariff-desc">Базовый доступ</div>
                         </div>
-                        <div class="tariff-price" id="price-1m">—</div>
+                        <div class="tariff-pricing">
+                            <div class="tariff-old-price" id="old-price-1m" hidden></div>
+                            <div class="tariff-price" id="price-1m">—</div>
+                        </div>
                         <div class="tariff-discount-tag" id="discount-tag-1m"></div>
                     </div>
                     
-                    <div class="tariff-card recommended" id="tariff-3m" data-action="select-tariff" data-months="3">
+                    <div class="tariff-card recommended" id="tariff-3m" data-action="select-tariff" data-months="3" role="button" tabindex="0" aria-pressed="false">
                         <div class="hitbox-overlay"></div>
                         <div class="badge" id="badge-3m">ТОП</div>
                         <div>
                             <div class="tariff-title">3 МЕСЯЦА</div>
                             <div class="tariff-desc">Оптимальный выбор</div>
                         </div>
-                        <div class="tariff-price" id="price-3m">—</div>
+                        <div class="tariff-pricing">
+                            <div class="tariff-old-price" id="old-price-3m" hidden></div>
+                            <div class="tariff-price" id="price-3m">—</div>
+                        </div>
                         <div class="tariff-discount-tag" id="discount-tag-3m"></div>
                     </div>
 
-                    <div class="tariff-card" id="tariff-6m" data-action="select-tariff" data-months="6">
+                    <div class="tariff-card" id="tariff-6m" data-action="select-tariff" data-months="6" role="button" tabindex="0" aria-pressed="false">
                         <div class="hitbox-overlay"></div>
                         <div class="badge hot" id="badge-6m">ВЫГОДА</div>
                         <div>
                             <div class="tariff-title">6 МЕСЯЦЕВ</div>
                             <div class="tariff-desc">Максимальный комфорт</div>
                         </div>
-                        <div class="tariff-price" id="price-6m">—</div>
+                        <div class="tariff-pricing">
+                            <div class="tariff-old-price" id="old-price-6m" hidden></div>
+                            <div class="tariff-price" id="price-6m">—</div>
+                        </div>
                         <div class="tariff-discount-tag" id="discount-tag-6m"></div>
                     </div>
 
-                    <div class="tariff-card vip" id="tariff-12m" data-action="select-tariff" data-months="12">
+                    <div class="tariff-card vip" id="tariff-12m" data-action="select-tariff" data-months="12" role="button" tabindex="0" aria-pressed="false">
                         <div class="hitbox-overlay"></div>
                         <div class="badge vip-badge" id="badge-12m">VIP</div>
                         <div>
                             <div class="tariff-title">12 МЕСЯЦЕВ</div>
                             <div class="tariff-desc">Безлимит на год</div>
                         </div>
-                        <div class="tariff-price" id="price-12m">—</div>
+                        <div class="tariff-pricing">
+                            <div class="tariff-old-price" id="old-price-12m" hidden></div>
+                            <div class="tariff-price" id="price-12m">—</div>
+                        </div>
                         <div class="tariff-discount-tag" id="discount-tag-12m"></div>
                     </div>
                 </div>
@@ -586,6 +598,7 @@
 <script src="ui-motion.js?v=5004"></script>
 <script src="faq-animation.js?v=5004"></script>
 <script src="vless-actions.js?v=5004"></script>
-<script src="app.js?v=5004"></script>
+<script src="tariff-display.js?v=5005"></script>
+<script src="app.js?v=5005"></script>
 </body>
 </html>

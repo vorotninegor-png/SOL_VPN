@@ -81,7 +81,6 @@ function prefersReducedMotion() {
 
 // Каталог приходит только с backend; локальных цен в бизнес-логике нет.
 let tariffCatalog = {};
-let activeDiscounts = { 1: 0, 3: 0, 6: 0, 12: 0 };
 
 function apiUrl(path) {
     return `${API_BASE_URL}${path}`;
@@ -136,10 +135,11 @@ function applyBootstrap(data) {
     }
 
     if (Array.isArray(data.tariffs)) {
-        data.tariffs.forEach(t => {
-            tariffCatalog[Number(t.months)] = t;
-            activeDiscounts[Number(t.months)] = Number(t.discount_percent || 0);
-        });
+        tariffCatalog = window.SolTariffDisplay?.catalogFromBootstrap(data.tariffs) || {};
+        if (selectedMonths && !tariffCatalog[Number(selectedMonths)]) {
+            selectedMonths = null;
+            tg?.MainButton?.hide?.();
+        }
         updateTariffPricesUI();
     }
 
@@ -1176,14 +1176,6 @@ function fillReelCards() {
     reel.style.transform = `translateY(-${randomIndex * 40}px)`;
 }
 
-function tariffPriceText(tariff) {
-    if (!tariff) return "—";
-    if (tariff.price_rub !== undefined) return String(tariff.price_rub);
-    const kopecks = Number(tariff.price_kopecks);
-    if (!Number.isInteger(kopecks)) return "—";
-    return `${Math.trunc(kopecks / 100)}.${String(kopecks % 100).padStart(2, "0")}`;
-}
-
 function updateTariffPricesUI() {
     const baseClasses = {
         1: "tariff-card",
@@ -1196,28 +1188,39 @@ function updateTariffPricesUI() {
     [1, 3, 6, 12].forEach(months => {
         const tariff = tariffCatalog[months];
         const priceEl = document.getElementById(`price-${months}m`);
+        const oldPriceEl = document.getElementById(`old-price-${months}m`);
         const cardEl = document.getElementById(`tariff-${months}m`);
         const tagEl = document.getElementById(`discount-tag-${months}m`);
-        if (!tariff || !priceEl || !cardEl) return;
+        if (!priceEl || !cardEl) return;
 
-        const discount = Number(tariff.discount_percent || 0);
         const shown = cardEl.classList.contains("show-card");
         const selected = Number(selectedMonths) === months;
-        priceEl.innerText = `${tariffPriceText(tariff)} ₽`;
+        const display = window.SolTariffDisplay?.tariffDisplay(tariff)
+            || { valid: false, finalPrice: "—", originalPrice: "", discountLabel: "", hasDiscount: false };
+        priceEl.textContent = `${display.finalPrice}${display.valid ? " ₽" : ""}`;
+        if (oldPriceEl) {
+            oldPriceEl.textContent = display.hasDiscount ? `${display.originalPrice} ₽` : "";
+            oldPriceEl.hidden = !display.hasDiscount;
+        }
 
-        cardEl.className = `${baseClasses[months]}${discount > 0 ? ` discounted-neon-${months}m` : ""}${shown ? " show-card" : ""}${selected ? " selected-tariff" : ""}`;
+        cardEl.className = `${baseClasses[months]}${display.hasDiscount ? ` discounted-neon-${months}m` : ""}${shown ? " show-card" : ""}${selected ? " selected-tariff" : ""}`;
+        cardEl.setAttribute("aria-pressed", String(selected));
+        cardEl.setAttribute("aria-disabled", String(!display.valid));
         if (tagEl) {
-            if (discount > 0) {
-                tagEl.innerText = `🔥 -${discount}%`;
+            if (display.hasDiscount) {
+                tagEl.textContent = `🔥 ${display.discountLabel}`;
                 tagEl.style.color = neons[months];
                 tagEl.style.textShadow = `0 0 8px ${neons[months]}`;
                 tagEl.className = "tariff-discount-tag show-tag";
             } else {
-                tagEl.innerText = "";
+                tagEl.textContent = "";
+                tagEl.style.color = "";
+                tagEl.style.textShadow = "";
                 tagEl.className = "tariff-discount-tag";
             }
         }
     });
+    syncSelectedTariffMainButton();
 }
 
 // ==========================================
@@ -1882,9 +1885,15 @@ function selectTariff(months) {
     selectedMonths = months;
     updateTariffPricesUI();
 
-    const price = tariffPriceText(tariffCatalog[months]);
+    tg?.HapticFeedback?.selectionChanged?.();
+}
+
+function syncSelectedTariffMainButton() {
+    const selection = window.SolTariffDisplay?.selectionSnapshot(tariffCatalog, selectedMonths);
+    if (!selection || !tg?.MainButton) return;
+    const price = selection.display.finalPrice;
     if (tg?.MainButton) {
-        tg.MainButton.setText(`💳 Оплатить ${months} мес. — ${price} ₽`);
+        tg.MainButton.setText(`💳 Оплатить ${selection.months} мес. — ${price} ₽`);
         tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: !paymentInProgress, is_visible: true });
         tg.MainButton.show();
     }
