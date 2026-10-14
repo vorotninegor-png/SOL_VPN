@@ -21,6 +21,7 @@ let isSubscribedUser = false;
 let currentVlessUri = "";
 let selectedMonths = null;
 let paymentInProgress = false;
+let paymentConfig = { enabled: false, currency: "RUB" };
 let currentGameSession = "";
 let serverOnline = false;
 
@@ -142,6 +143,14 @@ function applyBootstrap(data) {
         }
         updateTariffPricesUI();
     }
+
+    const paymentSnapshot = window.SolTariffDisplay?.paymentCatalogFromBootstrap(data.payment)
+        || { enabled: false, currency: "RUB", catalog: {} };
+    paymentConfig = { enabled: paymentSnapshot.enabled, currency: paymentSnapshot.currency };
+    if (paymentConfig.enabled) {
+        tariffCatalog = paymentSnapshot.catalog;
+    }
+    updateTariffPricesUI();
 
     if (data.referral) {
         currentRefPercent = Number(data.referral.percent ?? 5.0);
@@ -1197,9 +1206,10 @@ function updateTariffPricesUI() {
         const selected = Number(selectedMonths) === months;
         const display = window.SolTariffDisplay?.tariffDisplay(tariff)
             || { valid: false, finalPrice: "—", originalPrice: "", discountLabel: "", hasDiscount: false };
-        priceEl.textContent = `${display.finalPrice}${display.valid ? " ₽" : ""}`;
+        const unit = paymentConfig.enabled && paymentConfig.currency === "XTR" ? " ⭐" : " ₽";
+        priceEl.textContent = `${display.finalPrice}${display.valid ? unit : ""}`;
         if (oldPriceEl) {
-            oldPriceEl.textContent = display.hasDiscount ? `${display.originalPrice} ₽` : "";
+            oldPriceEl.textContent = display.hasDiscount ? `${display.originalPrice}${unit}` : "";
             oldPriceEl.hidden = !display.hasDiscount;
         }
 
@@ -1850,12 +1860,22 @@ function toggleTariffs(forceOpen = false) {
 
 async function paySelectedTariff() {
     if (!selectedMonths || paymentInProgress) return;
+    if (!paymentConfig.enabled) {
+        showToast("⚠️ Оплата временно недоступна", "error");
+        return;
+    }
+    const selection = window.SolTariffDisplay?.selectionSnapshot(tariffCatalog, selectedMonths);
+    if (!selection) return;
     paymentInProgress = true;
     tg?.MainButton?.disable?.();
     try {
         const result = await apiFetch("/api/payments/invoice", {
             method: "POST",
-            body: JSON.stringify({ months: Number(selectedMonths) })
+            body: JSON.stringify({
+                months: Number(selectedMonths),
+                expected_currency: paymentConfig.currency,
+                expected_amount: selection.tariff.price_kopecks
+            })
         });
         if (!tg?.openInvoice) throw new Error("Telegram openInvoice недоступен");
         tg.MainButton?.showProgress?.();
@@ -1864,7 +1884,7 @@ async function paySelectedTariff() {
             tg.MainButton?.enable?.();
             tg.MainButton?.hideProgress?.();
             if (status === "paid") {
-                showToast("✅ Оплата прошла. Обновляю подписку...");
+                showToast("⏳ Платёж принят Telegram. Проверяем подписку...");
                 await new Promise(resolve => setTimeout(resolve, 900));
                 await loadBootstrap(false);
             } else if (status === "failed") {
@@ -1892,9 +1912,14 @@ function syncSelectedTariffMainButton() {
     const selection = window.SolTariffDisplay?.selectionSnapshot(tariffCatalog, selectedMonths);
     if (!selection || !tg?.MainButton) return;
     const price = selection.display.finalPrice;
+    const unit = paymentConfig.enabled && paymentConfig.currency === "XTR" ? "⭐" : "₽";
     if (tg?.MainButton) {
-        tg.MainButton.setText(`💳 Оплатить ${selection.months} мес. — ${price} ₽`);
-        tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: !paymentInProgress, is_visible: true });
+        tg.MainButton.setText(paymentConfig.enabled
+            ? `💳 Оплатить ${selection.months} мес. — ${price} ${unit}`
+            : "Оплата временно недоступна");
+        tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: paymentConfig.enabled && !paymentInProgress, is_visible: true });
+        if (paymentConfig.enabled && !paymentInProgress) tg.MainButton.enable?.();
+        else tg.MainButton.disable?.();
         tg.MainButton.show();
     }
 }

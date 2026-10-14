@@ -51,6 +51,22 @@
         return catalog;
     }
 
+    function paymentCatalogFromBootstrap(payment) {
+        if (!payment || payment.enabled !== true || payment.currency !== "XTR") {
+            return { enabled: false, currency: "RUB", catalog: {} };
+        }
+        const tariffs = Array.isArray(payment.tariffs) ? payment.tariffs.map(item => ({
+            months: item.months,
+            title: `${item.months} мес.`,
+            original_price_kopecks: item.original_amount,
+            price_kopecks: item.amount,
+            discount_percent: item.discount_percent,
+            currency: "XTR"
+        })) : [];
+        const catalog = catalogFromBootstrap(tariffs);
+        return { enabled: Object.keys(catalog).length > 0, currency: "XTR", catalog };
+    }
+
     function tariffDisplay(tariff) {
         const normalized = normalizeTariff(tariff);
         if (!normalized) {
@@ -58,10 +74,13 @@
         }
         const hasDiscount = normalized.discount_percent > 0
             && normalized.price_kopecks < normalized.original_price_kopecks;
+        const formatAmount = normalized.currency === "XTR"
+            ? value => String(value)
+            : formatKopecks;
         return {
             valid: true,
-            finalPrice: formatKopecks(normalized.price_kopecks),
-            originalPrice: hasDiscount ? formatKopecks(normalized.original_price_kopecks) : "",
+            finalPrice: formatAmount(normalized.price_kopecks),
+            originalPrice: hasDiscount ? formatAmount(normalized.original_price_kopecks) : "",
             discountLabel: hasDiscount ? `−${normalized.discount_percent}%` : "",
             hasDiscount
         };
@@ -77,6 +96,7 @@
         catalogFromBootstrap,
         formatKopecks,
         normalizeTariff,
+        paymentCatalogFromBootstrap,
         selectionSnapshot,
         tariffDisplay
     };

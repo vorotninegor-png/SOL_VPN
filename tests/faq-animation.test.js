@@ -244,10 +244,10 @@ test("page loads motion helpers before the cache-busted application bundle", () 
     const motionPosition = html.indexOf("ui-motion.js?v=5004");
     const animatorPosition = html.indexOf("faq-animation.js?v=5004");
     const vlessPosition = html.indexOf("vless-actions.js?v=5004");
-    const tariffPosition = html.indexOf("tariff-display.js?v=5005");
-    const appPosition = html.indexOf("app.js?v=5005");
+    const tariffPosition = html.indexOf("tariff-display.js?v=5006");
+    const appPosition = html.indexOf("app.js?v=5006");
 
-    assert.ok(html.includes("style.css?v=5005"));
+    assert.ok(html.includes("style.css?v=5006"));
     assert.ok(motionPosition >= 0 && motionPosition < animatorPosition);
     assert.ok(animatorPosition < vlessPosition && vlessPosition < tariffPosition && tariffPosition < appPosition);
     assert.equal(app.includes("word-glyph"), false);

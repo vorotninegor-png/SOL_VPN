@@ -7,6 +7,7 @@ const path = require("node:path");
 const {
     catalogFromBootstrap,
     formatKopecks,
+    paymentCatalogFromBootstrap,
     selectionSnapshot,
     tariffDisplay
 } = require("../tariff-display.js");
@@ -66,13 +67,34 @@ test("rapid tariff selection always resolves to the latest card", () => {
     assert.equal(selected.display.finalPrice, "999");
 });
 
+test("Telegram Stars catalog uses only enabled server-provided XTR values", () => {
+    const disabled = paymentCatalogFromBootstrap({enabled:false, currency:"XTR", tariffs:[{months:1, original_amount:100, amount:80, discount_percent:20}]});
+    assert.equal(disabled.enabled, false);
+    assert.deepEqual(disabled.catalog, {});
+    const stars = paymentCatalogFromBootstrap({enabled:true, currency:"XTR", tariffs:[{months:1, original_amount:100, amount:80, discount_percent:20}]});
+    assert.equal(stars.enabled, true);
+    assert.equal(stars.currency, "XTR");
+    assert.equal(stars.catalog[1].price_kopecks, 80);
+    assert.equal(tariffDisplay(stars.catalog[1]).finalPrice, "80");
+});
+
+test("payment catalog rejects an unexpected currency instead of relabeling RUB", () => {
+    const result = paymentCatalogFromBootstrap({enabled:true, currency:"RUB", tariffs:[{months:1, original_amount:19900, amount:19900, discount_percent:0}]});
+    assert.equal(result.enabled, false);
+    assert.deepEqual(result.catalog, {});
+});
+
 test("frontend contains no fallback tariff prices and loads tariff helper before app", () => {
     const projectRoot = path.resolve(__dirname, "..");
     const app = fs.readFileSync(path.join(projectRoot, "app.js"), "utf8");
     const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
     assert.equal(/(?:199|549|999|1799)\s*[₽р]/u.test(app), false);
     assert.equal(/(?:199|549|999|1799)\s*[₽р]/u.test(html), false);
-    assert.ok(html.indexOf("tariff-display.js?v=5005") < html.indexOf("app.js?v=5005"));
+    assert.ok(html.indexOf("tariff-display.js?v=5006") < html.indexOf("app.js?v=5006"));
     assert.match(app, /apiFetch\("\/api\/payments\/invoice"/u);
-    assert.match(app, /JSON\.stringify\(\{ months: Number\(selectedMonths\) \}\)/u);
+    assert.match(app, /expected_currency: paymentConfig\.currency/u);
+    assert.match(app, /expected_amount: selection\.tariff\.price_kopecks/u);
+    assert.match(app, /paymentConfig\.currency === "XTR"/u);
+    assert.match(app, /Оплата временно недоступна/u);
+    assert.doesNotMatch(app, /ЮKassa/u);
 });
