@@ -1329,64 +1329,167 @@ async function giftPromoToUser(userId, username) {
 }
 
 // ==========================================
-// 💡 БАЗА ЗНАНИЙ
-// ==========================================
-// 💡 БАЗА ЗНАНИЙ
-
-// ==========================================
-// 💡 БАЗА ЗНАНИЙ
+// БАЗА ЗНАНИЙ
 // ==========================================
 const defaultInfoText = "Нажмите на любой вопрос ниже. Ваш ответ появится здесь. Если нужной темы нет — напишите в нашу техподдержку.";
 
 const faqAnswers = {
-    1: "На вкладке Тоннель нажмите кнопку: Mini App запросит персональный VLESS-конфиг у вашего backend/Xray. Сам системный VPN затем включается в Happ, Hiddify, v2rayNG или другом клиенте.",
-    2: "После получения конфига нажмите Скопировать ключ VLESS и импортируйте его в Happ, Hiddify, v2rayNG или другой VLESS-клиент.",
-    3: "⚡️ Скорость и задержка зависят от VPS, маршрута, нагрузки и провайдера. Mini App не измеряет пропускную способность туннеля.",
-    4: "📱 VLESS-ключ персональный. Ограничение числа одновременных устройств пока не контролируется backend, поэтому не передавайте ключ другим.",
-    5: "📈 Чтобы увеличить процент реферальной программы перейдите во вкладку 'Игры', запускайте сканирование радара и ловите скоростные кометы!",
-    6: "🚫 Доступ к Охоте на кометы заблокирован, если у вас нет активной подписки VPN. Приобретите любой тариф на вкладке Кабинет.",
-    7: "☄️ Кометы пролетают через зону действия космического радара. Успейте кликнуть по комете, чтобы выбить бонус!",
-    8: "🌐 Да, VLESS работает на смартфонах, ПК (Windows/macOS/Linux) и роутерах Keenetic!"
+    1: "Перейдите во вкладку «Тоннель», нажмите фиолетовую кнопку и дождитесь подключения. Затем скопируйте ваш VLESS-ключ и вставьте его в приложение-клиент, например v2RayTun, HAPP или другое совместимое приложение.",
+    2: "После подключения во вкладке «Тоннель» нажмите кнопку «Копировать». Полученный ключ вставьте в приложение-клиент.",
+    3: "Наши серверы имеют пропускную способность до 1 Гбит/с. В будущем планируется увеличение скорости. Фактическая скорость подключения зависит от сети и устройства.",
+    4: "К одному ключу можно подключить до 10 устройств. Каждое дополнительное устройство оплачивается отдельно. Стоимость одинакова для всех тарифов.",
+    5: "Перейдите в раздел «Игры», ловите кометы и получайте увеличение реферального процента и другие бонусы.",
+    6: "Охота на кометы доступна только пользователям с активной подпиской SOL VPN. Приобрести подписку можно во вкладке «Кабинет».",
+    7: "Дождитесь появления кометы в зоне действия радара. Нажмите на вышку, затем коснитесь кометы, чтобы поймать её.",
+    8: "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения."
 };
 
-function animateDipText(newText) {
+const faqState = {
+    initialized: false,
+    selectedId: null,
+    targetText: defaultInfoText,
+    revision: 0,
+    animations: [],
+    motionQuery: null,
+    resizeObserver: null
+};
+
+const faqSegmenter = typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter("ru", { granularity: "grapheme" })
+    : null;
+
+function updateFaqHeight() {
+    const viewport = document.getElementById("terminal-answer-viewport");
+    const content = document.getElementById("terminal-text");
+    if (!viewport || !content) return;
+    const height = Math.ceil(content.getBoundingClientRect().height);
+    if (height > 0) viewport.style.height = `${height}px`;
+}
+
+function renderFaqCharacters(text, hidden = false) {
     const container = document.getElementById("terminal-text");
-    if (!container) return;
+    const fragment = document.createDocumentFragment();
 
-    const currentWords = container.querySelectorAll(".word-glyph");
+    // Word wrappers keep natural line breaks; actual spaces stay as text nodes.
+    for (const token of text.split(/(\s+)/u)) {
+        if (!token) continue;
+        if (/^\s+$/u.test(token)) {
+            fragment.appendChild(document.createTextNode(token));
+            continue;
+        }
+        const word = document.createElement("span");
+        word.className = "faq-word";
+        const characters = faqSegmenter
+            ? Array.from(faqSegmenter.segment(token), item => item.segment)
+            : Array.from(token);
+        for (const character of characters) {
+            const glyph = document.createElement("span");
+            glyph.className = "faq-glyph";
+            glyph.textContent = character;
+            if (hidden) {
+                glyph.style.opacity = "0";
+                glyph.style.transform = "scale(0.6)";
+            }
+            word.appendChild(glyph);
+        }
+        fragment.appendChild(word);
+    }
+    container.replaceChildren(fragment);
+    updateFaqHeight();
+}
 
-    if (currentWords.length > 0) {
-        currentWords.forEach((word, idx) => {
-            setTimeout(() => { if (word) word.classList.add("dip-shrink"); }, idx * 12);
-        });
-        setTimeout(() => { renderNewWordsWithExpand(newText); }, currentWords.length * 12 + 160);
-    } else {
-        renderNewWordsWithExpand(newText);
+function cancelFaqAnimations() {
+    // Preserve the current frame before cancelling so rapid taps never flash.
+    const frames = faqState.animations.map(animation => {
+        const glyph = animation.effect.target;
+        const style = getComputedStyle(glyph);
+        return { animation, glyph, opacity: style.opacity, transform: style.transform };
+    });
+    for (const { animation, glyph, opacity, transform } of frames) {
+        glyph.style.opacity = opacity;
+        glyph.style.transform = transform;
+        animation.cancel();
+    }
+    faqState.animations = [];
+}
+
+async function animateFaqCharacters(entering) {
+    const glyphs = Array.from(document.querySelectorAll("#terminal-text .faq-glyph"));
+    const frames = glyphs.map(glyph => {
+        const style = getComputedStyle(glyph);
+        return { glyph, opacity: style.opacity, transform: style.transform };
+    });
+    // Bound the total stagger even for long answers, without per-letter timers.
+    const step = Math.min(5, (entering ? 160 : 140) / Math.max(1, glyphs.length - 1));
+    const animations = frames.map(({ glyph, opacity, transform }, index) => glyph.animate([
+        { opacity, transform },
+        { opacity: entering ? 1 : 0, transform: entering ? "scale(1)" : "scale(0.6)" }
+    ], {
+        duration: entering ? 260 : 200,
+        delay: index * step,
+        easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+        fill: "forwards"
+    }));
+    faqState.animations = animations;
+    await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+}
+
+async function animateDipText(newText) {
+    const revision = ++faqState.revision;
+    faqState.targetText = newText;
+    cancelFaqAnimations();
+    const container = document.getElementById("terminal-text");
+    const liveAnswer = document.getElementById("faq-answer-live");
+    const reducedMotion = faqState.motionQuery?.matches || typeof container.animate !== "function";
+
+    if (!reducedMotion) {
+        await animateFaqCharacters(false);
+        if (revision !== faqState.revision) return;
+        cancelFaqAnimations();
+    }
+
+    renderFaqCharacters(newText, !reducedMotion);
+    liveAnswer.textContent = newText;
+    if (!reducedMotion) {
+        await animateFaqCharacters(true);
+        if (revision !== faqState.revision) return;
+        cancelFaqAnimations();
     }
 }
 
-function renderNewWordsWithExpand(text) {
-    const container = document.getElementById("terminal-text");
-    if (!container) return;
-
-    container.innerHTML = "";
-    const words = text.split(" ");
-
-    words.forEach((word, idx) => {
-        const span = document.createElement("span");
-        span.className = "word-glyph dip-shrink";
-        span.innerText = word;
-        container.appendChild(span);
-        setTimeout(() => { if (span) span.classList.remove("dip-shrink"); }, 40 + idx * 20);
-    });
+function initInfoFAQ() {
+    if (!faqState.initialized) {
+        faqState.initialized = true;
+        faqState.motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const onMotionChange = () => {
+            if (faqState.motionQuery.matches) animateDipText(faqState.targetText);
+        };
+        if (faqState.motionQuery.addEventListener) {
+            faqState.motionQuery.addEventListener("change", onMotionChange);
+        } else {
+            faqState.motionQuery.addListener(onMotionChange);
+        }
+        renderFaqCharacters(defaultInfoText);
+        if (typeof ResizeObserver === "function") {
+            faqState.resizeObserver = new ResizeObserver(updateFaqHeight);
+            faqState.resizeObserver.observe(document.getElementById("terminal-text"));
+        } else {
+            window.addEventListener("resize", updateFaqHeight);
+        }
+    }
+    updateFaqHeight();
 }
 
 function answerFAQ(id) {
     const text = faqAnswers[id];
-    if (text) {
-        animateDipText(text);
-        if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
-    }
+    if (!text || id === faqState.selectedId) return;
+    initInfoFAQ();
+    faqState.selectedId = id;
+    document.querySelectorAll("#screen-info .faq-btn").forEach(button => {
+        button.setAttribute("aria-pressed", String(Number(button.dataset.faqId) === id));
+    });
+    animateDipText(text);
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
 // ==========================================
@@ -1496,7 +1599,7 @@ function switchNav(index, screenId) {
         checkGameLockStatus();
     }
     if (screenId === 'info') {
-        setTimeout(() => { animateDipText(defaultInfoText); }, 100);
+        initInfoFAQ();
     }
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
 }
