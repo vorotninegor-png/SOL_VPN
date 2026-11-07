@@ -727,66 +727,155 @@ body {
 
 .shatter-dust { position: absolute; width: 5px; height: 5px; border-radius: 50%; pointer-events: none; z-index: 99; }
 
-/* 💡 ИНФО И ТЕРМИНАЛ */
-.terminal-box {
-    background: rgba(5, 8, 20, 0.9); border: 1px solid rgba(168, 85, 247, 0.3);
-    border-radius: 18px; padding: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), inset 0 0 15px rgba(168, 85, 247, 0.1);
-    min-height: 120px; display: flex; flex-direction: column; margin-bottom: 14px;
-    flex-shrink: 0;
+/* ИНФО И ТЕРМИНАЛ */
+#screen-info {
+    overflow-x: hidden;
+    overflow-y: auto;
+    min-width: 0;
 }
 
-.terminal-header {
+#screen-info .faq-header { flex-shrink: 0; }
+
+#screen-info .info-scroll-viewport {
+    position: relative;
+    flex: 1;
+    min-height: 160px;
+    min-width: 0;
+}
+
+/* The fade belongs to the viewport edge, never to the answer itself. */
+#screen-info .info-scroll-viewport::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    height: 32px;
+    background: linear-gradient(to bottom, rgba(8, 9, 26, 0), #08091a);
+    border-radius: 0 0 14px 14px;
+    pointer-events: none;
+}
+
+#screen-info .info-scroll-area {
+    height: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+    overflow-anchor: none;
+    padding: 8px 8px 40px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(168, 85, 247, 0.3) transparent;
+}
+
+#screen-info .terminal-box {
+    background: rgba(5, 8, 20, 0.9); border: 1px solid rgba(168, 85, 247, 0.3);
+    border-radius: 18px; padding: 16px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7), inset 0 0 15px rgba(168, 85, 247, 0.1);
+    display: flex; flex-direction: column; margin-bottom: 14px;
+    position: relative; flex-shrink: 0;
+}
+
+#screen-info .terminal-header {
     display: flex; align-items: center; gap: 6px; margin-bottom: 10px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 8px;
 }
 
-.term-dot { width: 8px; height: 8px; border-radius: 50%; }
-.term-dot.red { background: #ef4444; }
-.term-dot.yellow { background: #f59e0b; }
-.term-dot.green { background: #10b981; }
+#screen-info .term-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+#screen-info .term-dot.red { background: #ef4444; }
+#screen-info .term-dot.yellow { background: #f59e0b; }
+#screen-info .term-dot.green { background: #10b981; }
 
-.term-title {
+#screen-info .term-title {
     font-family: 'Rajdhani', sans-serif; font-size: 10px; font-weight: 700;
     color: rgba(255, 255, 255, 0.4); letter-spacing: 1px; margin-left: 4px;
+    min-width: 0; overflow-wrap: anywhere;
 }
 
-.terminal-body {
+#screen-info .terminal-answer-viewport {
+    overflow: hidden;
+    flex-shrink: 0;
+    transition: height 420ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+#screen-info .terminal-body {
     font-size: 13px; line-height: 1.6; color: #c084fc;
-    font-family: 'Ubuntu', sans-serif; flex-grow: 1; word-break: normal; overflow-wrap: break-word;
+    font-family: 'Ubuntu', sans-serif; word-break: normal; overflow-wrap: anywhere;
+    white-space: pre-wrap;
 }
 
-.word-glyph {
-    display: inline-block; white-space: nowrap; margin-right: 5px;
-    transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.28s ease, filter 0.28s ease;
-    will-change: transform, opacity;
+#screen-info .faq-word { display: inline-block; max-width: 100%; }
+
+#screen-info .faq-glyph {
+    display: inline-block;
+    transform-origin: center 65%;
 }
 
-.word-glyph.dip-shrink { opacity: 0; transform: scale(0.1) translateY(12px); filter: blur(4px); }
-
-.faq-questions-scroll { 
-    display: flex; flex-direction: column; gap: 9px; 
-    overflow-y: auto; max-height: 280px; padding-right: 4px; 
+#screen-info .faq-sr-only {
+    position: absolute;
+    width: 1px; height: 1px;
+    padding: 0; margin: -1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
 }
 
-.faq-questions-scroll::-webkit-scrollbar,
+#screen-info .faq-questions-scroll {
+    display: flex; flex-direction: column; gap: 9px;
+}
+
+#screen-info .info-scroll-area::-webkit-scrollbar,
 .all-users-scroll-list::-webkit-scrollbar,
 .drum-list-viewport::-webkit-scrollbar {
     width: 4px;
 }
-.faq-questions-scroll::-webkit-scrollbar-thumb,
+#screen-info .info-scroll-area::-webkit-scrollbar-thumb,
 .all-users-scroll-list::-webkit-scrollbar-thumb,
 .drum-list-viewport::-webkit-scrollbar-thumb {
     background: rgba(168, 85, 247, 0.3);
     border-radius: 10px;
 }
 
-.faq-btn {
-    width: 100%; padding: 13px 16px; text-align: left;
+#screen-info .faq-btn {
+    display: flex; align-items: center; gap: 12px;
+    width: 100%; min-width: 0; min-height: 48px;
+    padding: 13px 14px; text-align: left;
     background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 14px; color: #ffffff; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.25s ease;
+    border-radius: 14px; color: rgba(255, 255, 255, 0.76);
+    font-size: 12px; line-height: 1.5; font-weight: 500; cursor: pointer;
+    transition: background-color 380ms ease, border-color 380ms ease,
+                box-shadow 380ms ease, color 380ms ease;
 }
 
-.faq-btn:active { transform: scale(0.97); background: rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.4); }
+#screen-info .faq-btn > span { min-width: 0; overflow-wrap: anywhere; }
+
+#screen-info .faq-icon {
+    width: 24px; height: 24px; flex: 0 0 24px;
+    color: rgba(255, 255, 255, 0.8);
+    filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.22));
+    transition: color 380ms ease, filter 380ms ease;
+    pointer-events: none;
+}
+
+#screen-info .faq-btn[aria-pressed="true"] {
+    background-color: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.32);
+    color: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.1), inset 0 0 10px rgba(255, 255, 255, 0.025);
+}
+
+#screen-info .faq-btn[aria-pressed="true"] .faq-icon {
+    color: rgba(255, 255, 255, 0.96);
+    filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.4));
+}
+
+#screen-info .faq-btn:focus-visible {
+    outline: 2px solid #c084fc;
+    outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    #screen-info, #screen-info .terminal-answer-viewport,
+    #screen-info .faq-btn, #screen-info .faq-icon { transition: none; }
+}
 
 /* 👑 ЭКРАН: АДМИН-ПАНЕЛЬ */
 .admin-scroll-content {
@@ -929,6 +1018,36 @@ body {
 .empty-list-msg { font-size: 11px; color: rgba(255,255,255,0.3); text-align: center; padding: 15px; font-style: italic; }
 
 .all-users-scroll-list { display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; }
+
+#screen-admin .all-users-scroll-list {
+    max-height: clamp(220px, 48dvh, 460px);
+    overflow-x: hidden;
+    overscroll-behavior-y: contain;
+    -webkit-overflow-scrolling: touch;
+}
+#screen-admin .promo-input-row input { min-width: 0; }
+#screen-admin .user-profile-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+#screen-admin .user-profile-btn {
+    min-height: 40px; padding: 9px 11px;
+    border: 1px solid rgba(168, 85, 247, 0.4); border-radius: 10px;
+    background: rgba(168, 85, 247, 0.1); color: #e9d5ff;
+    font-size: 11px; line-height: 1.4; cursor: pointer;
+}
+#screen-admin .user-profile-btn:focus-visible { outline: 2px solid #c084fc; outline-offset: 2px; }
+#screen-admin .user-profile-btn[hidden], #screen-admin .admin-user-composer[hidden] { display: none; }
+#screen-admin .admin-users-more { width: 100%; margin-top: 8px; }
+#screen-admin .admin-users-status { color: #d1c4e9; font-size: 11px; line-height: 1.5; margin-top: 8px; overflow-wrap: anywhere; }
+#screen-admin .admin-users-status:empty { display: none; }
+#screen-admin .user-row-main { align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+#screen-admin .user-row-name { overflow-wrap: anywhere; min-width: 0; }
+#screen-admin .user-row-name > span { color: #c4b5fd; }
+#screen-admin .admin-user-composer { margin-top: 10px; font-size: 11px; color: #d1c4e9; }
+#screen-admin .admin-user-composer textarea {
+    display: block; width: 100%; min-height: 80px; padding: 10px; margin: 6px 0;
+    resize: vertical; user-select: text; border: 1px solid rgba(168, 85, 247, 0.4);
+    border-radius: 10px; background: #08091a; color: #fff; font-size: 13px;
+}
+#screen-admin .admin-user-composer p { line-height: 1.5; margin-bottom: 6px; }
 
 .user-row-card {
     background: rgba(255, 255, 255, 0.02); border: 1px solid rgba(255, 255, 255, 0.08);
