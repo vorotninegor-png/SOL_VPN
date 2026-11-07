@@ -753,7 +753,8 @@ body {
     flex-direction: column;
     margin-bottom: 14px;
     flex-shrink: 0;
-    transition: min-height 0.28s ease;
+    overflow: hidden;
+    transition: height 0.3s ease;
 }
 .terminal-header {
     display: flex;
