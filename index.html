@@ -314,7 +314,7 @@
     <!-- ========================================== -->
     <div class="screen" id="screen-info">
         <div class="faq-header">
-            <h2>💡 БАЗА ЗНАНИЙ</h2>
+            <h2><svg class="faq-title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6m-5 3h4m-5-6a6 6 0 1 1 6 0l-1 2h-4z"/></svg> БАЗА ЗНАНИЙ</h2>
         </div>
 
         <div class="terminal-box" id="terminal-box-element">
@@ -324,42 +324,52 @@
                 <span class="term-dot green"></span>
                 <span class="term-title">SOL_ASSISTANT_TERMINAL v2.5</span>
             </div>
-            <div class="terminal-body" id="terminal-text"></div>
+            <div class="terminal-body" id="terminal-text" aria-live="polite"></div>
         </div>
 
-        <div class="faq-questions-scroll">
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="1">
-                <div class="hitbox-overlay"></div>
-                🚀 Как подключить VPN?
-            </button>
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="2">
-                <div class="hitbox-overlay"></div>
-                🔑 Где взять VLESS ключ?
-            </button>
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="3">
-                <div class="hitbox-overlay"></div>
-                ⚡️ Какая максимальная скорость?
-            </button>
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="4">
-                <div class="hitbox-overlay"></div>
-                📱 Сколько устройств можно подключить?
-            </button>
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="5">
-                <div class="hitbox-overlay"></div>
-                📈 Как поднять % рефералки?
-            </button>
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="6">
-                <div class="hitbox-overlay"></div>
-                🔒 Почему заблокированы игры?
-            </button>
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="7">
-                <div class="hitbox-overlay"></div>
-                ☄️ Как ловить кометы?
-            </button>
-            <button class="faq-btn" data-action="answer-faq" data-faq-id="8">
-                <div class="hitbox-overlay"></div>
-                🌐 Работает ли на ПК и роутерах?
-            </button>
+        <div class="faq-questions-panel">
+            <div class="faq-questions-scroll">
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="1" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 14a9 9 0 0 1 14 0"/><path d="M8 17a5 5 0 0 1 8 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg>
+                    <span class="faq-label">Как подключить VPN?</span>
+                </button>
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="2" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="3"/><path d="M11 15h9m-3 0v-3m-3 3v-2"/></svg>
+                    <span class="faq-label">Где взять VLESS-ключ?</span>
+                </button>
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="3" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 18a9 9 0 1 1 14 0"/><path d="m12 15 4-6"/><circle cx="12" cy="15" r="1.5"/></svg>
+                    <span class="faq-label">Какая максимальная скорость?</span>
+                </button>
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="4" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="13" height="10" rx="2"/><path d="M6 19h7m-3-4v4"/><rect x="18" y="9" width="4" height="11" rx="1"/></svg>
+                    <span class="faq-label">Сколько устройств можно подключить?</span>
+                </button>
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="5" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="2"/><circle cx="5" cy="18" r="2"/><circle cx="19" cy="18" r="2"/><path d="m11 7-5 9m7-9 5 9M7 18h10"/></svg>
+                    <span class="faq-label">Как увеличить процент рефералки?</span>
+                </button>
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="6" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15" r="1"/></svg>
+                    <span class="faq-label">Почему игры заблокированы?</span>
+                </button>
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="7" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 4 1.8 5.2L22 11l-5.2 1.8L15 18l-1.8-5.2L8 11l5.2-1.8z"/><path d="m4 20 6-6M3 14l5-5"/></svg>
+                    <span class="faq-label">Как ловить кометы?</span>
+                </button>
+                <button class="faq-btn" data-action="answer-faq" data-faq-id="8" aria-pressed="false">
+                    <div class="hitbox-overlay"></div>
+                    <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8m-4-4v4M5 10c3-4 11-4 14 0M8 12c2-2 6-2 8 0"/></svg>
+                    <span class="faq-label">Работает ли на ПК и роутерах?</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -541,7 +551,7 @@
 
         <button class="nav-item" id="btn-nav-3" data-action="switch-nav" data-index="3" data-screen="info">
             <div class="hitbox-overlay"></div>
-            <span class="nav-icon">💡</span>
+            <span class="nav-icon"><svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6m-5 3h4m-5-6a6 6 0 1 1 6 0l-1 2h-4z"/></svg></span>
             <span class="nav-text">Инфо</span>
         </button>
 
