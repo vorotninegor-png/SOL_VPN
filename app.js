@@ -45,6 +45,11 @@ let touchStartXs = { days: 0, discount: 0, limit: 0 };
 
 let approvedUsers = [];
 let allUsersList = [];
+const adminUsersState = {
+    initialized: false, query: "", offset: 0, total: null, hasMore: false,
+    legacyItems: null, loading: false, error: "", revision: 0, timer: null,
+    controller: null, capabilities: {}
+};
 let adminPanelInitialized = false;
 let mainButtonInitialized = false;
 let referralLink = "";
@@ -126,7 +131,6 @@ function applyBootstrap(data) {
     }
 
     if (data.admin && isAdmin) {
-        allUsersList = Array.isArray(data.admin.users) ? data.admin.users : [];
         approvedUsers = Array.isArray(data.admin.approved_users) ? data.admin.approved_users : [];
         renderAllUsersList();
         renderApprovedUsersDrum();
@@ -1032,6 +1036,17 @@ function initAdminPanel() {
     const nav = document.getElementById("app-bottom-nav");
     const adminBtn = document.getElementById("btn-nav-4");
     if (!isAdmin) {
+        adminUsersState.controller?.abort();
+        adminUsersState.revision++;
+        adminUsersState.initialized = false;
+        adminUsersState.loading = false;
+        adminUsersState.hasMore = false;
+        adminUsersState.legacyItems = null;
+        adminUsersState.capabilities = {};
+        allUsersList = [];
+        approvedUsers = [];
+        renderAllUsersList();
+        renderApprovedUsersDrum();
         nav?.classList.remove("nav-5-items");
         adminBtn?.classList.add("hidden");
         return;
@@ -1231,9 +1246,8 @@ async function addApprovedUser() {
             body: JSON.stringify({ username })
         });
         approvedUsers = result.admin.approved_users || [];
-        allUsersList = result.admin.users || [];
         renderApprovedUsersDrum();
-        renderAllUsersList();
+        await loadAdminUsers(true);
         input.value = "";
         showToast("⭐️ Пользователь добавлен в VIP");
     } catch (error) {
@@ -1248,9 +1262,8 @@ async function removeApprovedUser(userId) {
             body: JSON.stringify({ user_id: Number(userId) })
         });
         approvedUsers = result.admin.approved_users || [];
-        allUsersList = result.admin.users || [];
         renderApprovedUsersDrum();
-        renderAllUsersList();
+        await loadAdminUsers(true);
     } catch (error) {
         showToast(`🚨 ${error.message}`, "error");
     }
@@ -1263,26 +1276,86 @@ function escapeHtml(value) {
 }
 
 function filterAllUsersList() {
-    const searchInput = document.getElementById("admin-search-user");
-    const query = searchInput ? searchInput.value.toLowerCase().trim() : "";
-    renderAllUsersList(query);
+    clearTimeout(adminUsersState.timer);
+    adminUsersState.revision++;
+    adminUsersState.controller?.abort();
+    adminUsersState.timer = setTimeout(() => loadAdminUsers(true), 250);
 }
 
+function adminUserMatches(user, query) {
+    return [user.name, user.first_name, user.username, user.user_id]
+        .some(value => String(value ?? "").toLocaleLowerCase("ru").includes(query.replace(/^@/, "")));
+}
 
-function renderAllUsersList(filterQuery = "") {
+async function loadAdminUsers(reset = false) {
+    if (!isAdmin || (!reset && adminUsersState.loading)) return;
+    clearTimeout(adminUsersState.timer);
+    const query = (document.getElementById("admin-search-user")?.value || "").trim().toLocaleLowerCase("ru");
+    const revision = ++adminUsersState.revision;
+    adminUsersState.controller?.abort();
+    adminUsersState.controller = new AbortController();
+    if (reset) {
+        allUsersList = [];
+        adminUsersState.offset = 0;
+        adminUsersState.total = null;
+        adminUsersState.hasMore = false;
+        adminUsersState.capabilities = {};
+        adminUsersState.legacyItems = null;
+        adminUsersState.query = query;
+    }
+    adminUsersState.loading = true;
+    adminUsersState.error = "";
+    renderAllUsersList();
+    try {
+        let rows, pagination;
+        if (adminUsersState.legacyItems) {
+            rows = adminUsersState.legacyItems.slice(adminUsersState.offset, adminUsersState.offset + 50);
+            pagination = { total: adminUsersState.legacyItems.length, next_offset: adminUsersState.offset + rows.length };
+        } else {
+            const params = new URLSearchParams({ limit: "50", offset: String(adminUsersState.offset), q: query });
+            const result = await apiFetch(`/api/admin/users?${params}`, { signal: adminUsersState.controller.signal });
+            if (revision !== adminUsersState.revision || !isAdmin) return;
+            rows = Array.isArray(result.users) ? result.users : [];
+            pagination = result.pagination || (Number.isSafeInteger(result.total) ? result : null);
+            adminUsersState.capabilities = result.capabilities || {};
+            if (!pagination) {
+                // Older APIs ignore query parameters. Never call their snapshot a full list.
+                adminUsersState.legacyItems = rows.filter(user => adminUserMatches(user, query));
+                rows = adminUsersState.legacyItems.slice(0, 50);
+                pagination = { total: adminUsersState.legacyItems.length, next_offset: rows.length };
+            }
+        }
+        if (revision !== adminUsersState.revision || !isAdmin) return;
+        const users = new Map(allUsersList.map(user => [String(user.user_id), user]));
+        rows.forEach(user => users.set(String(user.user_id), user));
+        allUsersList = Array.from(users.values());
+        adminUsersState.total = Number.isSafeInteger(pagination.total) ? pagination.total : null;
+        const nextOffset = Number(pagination.next_offset ?? adminUsersState.offset + rows.length);
+        adminUsersState.hasMore = nextOffset > adminUsersState.offset && (
+            typeof pagination.has_more === "boolean" ? pagination.has_more : nextOffset < adminUsersState.total
+        );
+        adminUsersState.offset = nextOffset;
+        adminUsersState.initialized = true;
+    } catch (error) {
+        if (revision === adminUsersState.revision && error.name !== "AbortError") adminUsersState.error = error.message;
+    } finally {
+        if (revision === adminUsersState.revision) {
+            adminUsersState.loading = false;
+            renderAllUsersList();
+        }
+    }
+}
+
+function renderAllUsersList() {
     const container = document.getElementById("all-users-container");
     if (!container) return;
-    const query = String(filterQuery || "").toLowerCase();
-    const filtered = allUsersList.filter(u =>
-        String(u.name || "").toLowerCase().includes(query) ||
-        String(u.username || "").toLowerCase().includes(query) ||
-        String(u.user_id || "").includes(query)
-    );
-    if (!filtered.length) {
-        container.innerHTML = `<div class="empty-list-msg">Пользователи не найдены</div>`;
-        return;
-    }
-    container.innerHTML = filtered.map(u => {
+    const scrollTop = container.scrollTop;
+    const openDrawers = new Set(Array.from(container.querySelectorAll(".open-gift"), card => card.dataset.userId));
+    const drafts = new Map(Array.from(container.querySelectorAll(".user-row-card"), card => [card.dataset.userId, {
+        text: card.querySelector("textarea")?.value || "",
+        open: !card.querySelector(".admin-user-composer")?.hidden
+    }]));
+    container.innerHTML = (isAdmin ? allUsersList : []).map(u => {
         const statusTxt = u.hasSub ? "ПОДПИСКА АКТИВНА" : "НЕТ ПОДПИСКИ";
         const statusColor = u.hasSub ? "sub-on" : "sub-off";
         const subscriptionEnd = u.subscription_end || "—";
@@ -1290,10 +1363,20 @@ function renderAllUsersList(filterQuery = "") {
         const vpnKey = u.vpn_key || "ещё не выдан";
         const referrer = u.referrer_id ?? "—";
         return `
-            <div class="user-row-card ${u.hasSub ? "active-sub" : ""}" data-action="toggle-gift-drawer">
+            <div class="user-row-card ${u.hasSub ? "active-sub" : ""} ${openDrawers.has(String(u.user_id)) ? "open-gift" : ""}" data-user-id="${Number(u.user_id)}" data-action="toggle-gift-drawer">
                 <div class="user-row-main">
-                    <div class="user-row-name">${escapeHtml(u.name)} ${escapeHtml(u.username)}</div>
+                    <div class="user-row-name">${escapeHtml(u.name || u.first_name || "Без имени")}${u.username ? ` <span>@${escapeHtml(String(u.username).replace(/^@/, ""))}</span>` : ""}</div>
                     <div class="user-row-status ${statusColor}">${statusTxt}</div>
+                </div>
+                <div class="user-profile-actions">
+                    <button type="button" class="user-profile-btn" data-action="open-admin-profile" data-user-id="${Number(u.user_id)}">Открыть профиль</button>
+                    <button type="button" class="user-profile-btn" data-action="contact-admin-user" data-user-id="${Number(u.user_id)}" aria-expanded="false">Связаться через бота</button>
+                </div>
+                <div class="admin-user-composer" hidden>
+                    <label for="admin-message-${Number(u.user_id)}">Сообщение от поддержки SOL VPN</label>
+                    <textarea id="admin-message-${Number(u.user_id)}" maxlength="3500" rows="3" placeholder="Текст сообщения"></textarea>
+                    <p>Отправка возможна, если пользователь разрешил сообщения бота.</p>
+                    <button type="button" class="user-profile-btn" data-action="send-admin-message" data-user-id="${Number(u.user_id)}">Отправить сообщение</button>
                 </div>
                 <div class="user-row-meta">
                     <span>ID: ${Number(u.user_id)}</span>
@@ -1308,6 +1391,77 @@ function renderAllUsersList(filterQuery = "") {
                 </div>
             </div>`;
     }).join("");
+    container.querySelectorAll(".user-row-card").forEach(card => {
+        const draft = drafts.get(card.dataset.userId);
+        if (!draft) return;
+        card.querySelector("textarea").value = draft.text;
+        card.querySelector(".admin-user-composer").hidden = !draft.open;
+        card.querySelector('[data-action="contact-admin-user"]').setAttribute("aria-expanded", String(draft.open));
+    });
+    if (!allUsersList.length && isAdmin) container.innerHTML = `<div class="empty-list-msg">${adminUsersState.loading ? "Загрузка пользователей…" : "Пользователи не найдены"}</div>`;
+    container.scrollTop = scrollTop;
+    const status = document.getElementById("admin-users-status");
+    if (status) status.textContent = !isAdmin ? "" : adminUsersState.error || (adminUsersState.loading ? "Загрузка…" :
+        `Показано ${allUsersList.length}${adminUsersState.total === null ? "" : ` из ${adminUsersState.total}`}${adminUsersState.legacyItems ? ". API без пагинации: полнота списка не подтверждена." : ""}`);
+    const more = document.getElementById("admin-users-more");
+    if (more) {
+        more.hidden = !isAdmin || (!adminUsersState.hasMore && !adminUsersState.error);
+        more.disabled = adminUsersState.loading;
+        more.textContent = adminUsersState.error ? "Повторить загрузку" : "Показать ещё";
+    }
+}
+
+function adminActionStatus(text) {
+    const status = document.getElementById("admin-action-status");
+    if (status) {
+        status.textContent = text;
+        status.scrollIntoView({ block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    }
+}
+
+async function openAdminProfile(userId) {
+    if (!isAdmin) return;
+    const user = allUsersList.find(item => Number(item.user_id) === userId);
+    if (!user || !Number.isSafeInteger(userId) || userId <= 0 || userId >= 2**52) return adminActionStatus("Некорректный Telegram ID.");
+    const username = String(user.username || "").replace(/^@/, "");
+    try {
+        if (/^[a-zA-Z][a-zA-Z0-9_]{0,31}$/.test(username)) {
+            if (!tg?.openTelegramLink) throw new Error("Откройте Mini App внутри Telegram для перехода к профилю.");
+            tg.openTelegramLink(`https://t.me/${encodeURIComponent(username)}?profile`);
+            adminActionStatus("Переход запрошен. Telegram не подтверждает открытие профиля. Если переход недоступен, используйте «Связаться через бота».");
+        } else {
+            if (!adminUsersState.capabilities.profile_link) throw new Error("Кнопка профиля без username сейчас недоступна. Для неё нужна ссылка в личном чате SOL VPN. Если переход не удаётся, используйте «Связаться через бота».");
+            const result = await apiFetch(`/api/admin/users/${userId}/profile-link`, { method: "POST" });
+            adminActionStatus(result.message || "Кнопка профиля подготовлена в личном чате SOL VPN. Открытие профиля зависит от настроек Telegram.");
+            if (result.bot_url && /^https:\/\/t\.me\/[a-zA-Z0-9_]+$/.test(result.bot_url)) tg?.openTelegramLink?.(result.bot_url);
+        }
+    } catch (error) { adminActionStatus(error.message); }
+}
+
+function toggleAdminContact(button) {
+    if (!isAdmin) return;
+    const composer = button.closest(".user-row-card").querySelector(".admin-user-composer");
+    composer.hidden = !composer.hidden;
+    button.setAttribute("aria-expanded", String(!composer.hidden));
+    if (!composer.hidden) composer.querySelector("textarea").focus();
+}
+
+async function sendAdminMessage(button) {
+    if (!isAdmin || button.disabled) return;
+    const card = button.closest(".user-row-card");
+    const input = card.querySelector("textarea");
+    const text = input.value.trim();
+    if (!text) return adminActionStatus("Введите сообщение.");
+    if (!adminUsersState.capabilities.contact_message) return adminActionStatus("Отправка сообщений через SOL VPN сейчас недоступна. Попробуйте позже.");
+    button.disabled = true;
+    try {
+        const result = await apiFetch(`/api/admin/users/${Number(card.dataset.userId)}/message`, {
+            method: "POST", body: JSON.stringify({ text })
+        });
+        input.value = "";
+        adminActionStatus(result.message || "Telegram принял сообщение. Прочтение не подтверждено.");
+    } catch (error) { adminActionStatus(error.message); }
+    finally { button.disabled = false; }
 }
 
 function toggleGiftDrawer(cardEl) {
@@ -1339,54 +1493,162 @@ async function giftPromoToUser(userId, username) {
 const defaultInfoText = "Нажмите на любой вопрос ниже. Ваш ответ появится здесь. Если нужной темы нет — напишите в нашу техподдержку.";
 
 const faqAnswers = {
-    1: "На вкладке Тоннель нажмите кнопку: Mini App запросит персональный VLESS-конфиг у вашего backend/Xray. Сам системный VPN затем включается в Happ, Hiddify, v2rayNG или другом клиенте.",
-    2: "После получения конфига нажмите Скопировать ключ VLESS и импортируйте его в Happ, Hiddify, v2rayNG или другой VLESS-клиент.",
-    3: "⚡️ Скорость и задержка зависят от VPS, маршрута, нагрузки и провайдера. Mini App не измеряет пропускную способность туннеля.",
-    4: "📱 VLESS-ключ персональный. Ограничение числа одновременных устройств пока не контролируется backend, поэтому не передавайте ключ другим.",
-    5: "📈 Чтобы увеличить процент реферальной программы перейдите во вкладку 'Игры', запускайте сканирование радара и ловите скоростные кометы!",
-    6: "🚫 Доступ к Охоте на кометы заблокирован, если у вас нет активной подписки VPN. Приобретите любой тариф на вкладке Кабинет.",
-    7: "☄️ Кометы пролетают через зону действия космического радара. Успейте кликнуть по комете, чтобы выбить бонус!",
-    8: "🌐 Да, VLESS работает на смартфонах, ПК (Windows/macOS/Linux) и роутерах Keenetic!"
+    1: "На вкладке «Тоннель» нажмите кнопку, чтобы получить персональный VLESS-ключ. Сам системный VPN затем включается в Happ, Hiddify, v2rayNG или другом клиенте.",
+    2: "После получения конфига нажмите «Копировать» и импортируйте его в Happ, Hiddify, v2rayNG или другой VLESS-клиент.",
+    3: "Скорость и задержка зависят от VPS, маршрута, нагрузки и провайдера. Mini App не измеряет пропускную способность туннеля.",
+    4: "VLESS-ключ персональный. Ограничение числа одновременных устройств пока не контролируется backend, поэтому не передавайте ключ другим.",
+    5: "Чтобы увеличить процент реферальной программы перейдите во вкладку 'Игры', запускайте сканирование радара и ловите скоростные кометы!",
+    6: "Доступ к Охоте на кометы заблокирован, если у вас нет активной подписки VPN. Приобретите любой тариф на вкладке Кабинет.",
+    7: "Кометы пролетают через зону действия космического радара. Успейте кликнуть по комете, чтобы выбить бонус!",
+    8: "Да, VLESS работает на смартфонах, ПК (Windows/macOS/Linux) и роутерах Keenetic!"
 };
 
-function animateDipText(newText) {
+const faqState = {
+    initialized: false,
+    selectedId: null,
+    targetText: defaultInfoText,
+    revision: 0,
+    animations: [],
+    motionQuery: null,
+    resizeObserver: null
+};
+
+const faqSegmenter = typeof Intl.Segmenter === "function"
+    ? new Intl.Segmenter("ru", { granularity: "grapheme" })
+    : null;
+
+function updateFaqHeight() {
+    const viewport = document.getElementById("terminal-answer-viewport");
+    const content = document.getElementById("terminal-text");
+    if (!viewport || !content) return;
+    const height = Math.ceil(content.getBoundingClientRect().height);
+    if (height > 0) viewport.style.height = `${height}px`;
+}
+
+function renderFaqCharacters(text, hidden = false) {
     const container = document.getElementById("terminal-text");
-    if (!container) return;
+    const fragment = document.createDocumentFragment();
 
-    const currentWords = container.querySelectorAll(".word-glyph");
+    // Word wrappers keep natural line breaks; actual spaces stay as text nodes.
+    for (const token of text.split(/(\s+)/u)) {
+        if (!token) continue;
+        if (/^\s+$/u.test(token)) {
+            fragment.appendChild(document.createTextNode(token));
+            continue;
+        }
+        const word = document.createElement("span");
+        word.className = "faq-word";
+        const characters = faqSegmenter
+            ? Array.from(faqSegmenter.segment(token), item => item.segment)
+            : Array.from(token);
+        for (const character of characters) {
+            const glyph = document.createElement("span");
+            glyph.className = "faq-glyph";
+            glyph.textContent = character;
+            if (hidden) {
+                glyph.style.opacity = "0";
+                glyph.style.transform = "scale(0.6)";
+            }
+            word.appendChild(glyph);
+        }
+        fragment.appendChild(word);
+    }
+    container.replaceChildren(fragment);
+    updateFaqHeight();
+}
 
-    if (currentWords.length > 0) {
-        currentWords.forEach((word, idx) => {
-            setTimeout(() => { if (word) word.classList.add("dip-shrink"); }, idx * 12);
-        });
-        setTimeout(() => { renderNewWordsWithExpand(newText); }, currentWords.length * 12 + 160);
-    } else {
-        renderNewWordsWithExpand(newText);
+function cancelFaqAnimations() {
+    // Preserve the current frame before cancelling so rapid taps never flash.
+    const frames = faqState.animations.map(animation => {
+        const glyph = animation.effect.target;
+        const style = getComputedStyle(glyph);
+        return { animation, glyph, opacity: style.opacity, transform: style.transform };
+    });
+    for (const { animation, glyph, opacity, transform } of frames) {
+        glyph.style.opacity = opacity;
+        glyph.style.transform = transform;
+        animation.cancel();
+    }
+    faqState.animations = [];
+}
+
+async function animateFaqCharacters(entering) {
+    const glyphs = Array.from(document.querySelectorAll("#terminal-text .faq-glyph"));
+    const frames = glyphs.map(glyph => {
+        const style = getComputedStyle(glyph);
+        return { glyph, opacity: style.opacity, transform: style.transform };
+    });
+    // Bound the total stagger even for long answers, without per-letter timers.
+    const step = Math.min(5, (entering ? 160 : 140) / Math.max(1, glyphs.length - 1));
+    const animations = frames.map(({ glyph, opacity, transform }, index) => glyph.animate([
+        { opacity, transform },
+        { opacity: entering ? 1 : 0, transform: entering ? "scale(1)" : "scale(0.6)" }
+    ], {
+        duration: entering ? 260 : 200,
+        delay: index * step,
+        easing: "cubic-bezier(0.4, 0, 0.2, 1)",
+        fill: "forwards"
+    }));
+    faqState.animations = animations;
+    await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+}
+
+async function animateDipText(newText) {
+    const revision = ++faqState.revision;
+    faqState.targetText = newText;
+    cancelFaqAnimations();
+    const container = document.getElementById("terminal-text");
+    const liveAnswer = document.getElementById("faq-answer-live");
+    const reducedMotion = faqState.motionQuery?.matches || typeof container.animate !== "function";
+
+    if (!reducedMotion) {
+        await animateFaqCharacters(false);
+        if (revision !== faqState.revision) return;
+        cancelFaqAnimations();
+    }
+
+    renderFaqCharacters(newText, !reducedMotion);
+    liveAnswer.textContent = newText;
+    if (!reducedMotion) {
+        await animateFaqCharacters(true);
+        if (revision !== faqState.revision) return;
+        cancelFaqAnimations();
     }
 }
 
-function renderNewWordsWithExpand(text) {
-    const container = document.getElementById("terminal-text");
-    if (!container) return;
-
-    container.innerHTML = "";
-    const words = text.split(" ");
-
-    words.forEach((word, idx) => {
-        const span = document.createElement("span");
-        span.className = "word-glyph dip-shrink";
-        span.innerText = word;
-        container.appendChild(span);
-        setTimeout(() => { if (span) span.classList.remove("dip-shrink"); }, 40 + idx * 20);
-    });
+function initInfoFAQ() {
+    if (!faqState.initialized) {
+        faqState.initialized = true;
+        faqState.motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+        const onMotionChange = () => {
+            if (faqState.motionQuery.matches) animateDipText(faqState.targetText);
+        };
+        if (faqState.motionQuery.addEventListener) {
+            faqState.motionQuery.addEventListener("change", onMotionChange);
+        } else {
+            faqState.motionQuery.addListener(onMotionChange);
+        }
+        renderFaqCharacters(defaultInfoText);
+        if (typeof ResizeObserver === "function") {
+            faqState.resizeObserver = new ResizeObserver(updateFaqHeight);
+            faqState.resizeObserver.observe(document.getElementById("terminal-text"));
+        } else {
+            window.addEventListener("resize", updateFaqHeight);
+        }
+    }
+    updateFaqHeight();
 }
 
 function answerFAQ(id) {
     const text = faqAnswers[id];
-    if (text) {
-        animateDipText(text);
-        if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
-    }
+    if (!text || id === faqState.selectedId) return;
+    initInfoFAQ();
+    faqState.selectedId = id;
+    document.querySelectorAll("#screen-info .faq-btn").forEach(button => {
+        button.setAttribute("aria-pressed", String(Number(button.dataset.faqId) === id));
+    });
+    animateDipText(text);
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
 // ==========================================
@@ -1496,8 +1758,9 @@ function switchNav(index, screenId) {
         checkGameLockStatus();
     }
     if (screenId === 'info') {
-        setTimeout(() => { animateDipText(defaultInfoText); }, 100);
+        initInfoFAQ();
     }
+    if (screenId === 'admin' && isAdmin && !adminUsersState.initialized) loadAdminUsers(true);
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
 }
 
@@ -1568,7 +1831,13 @@ function initActionHandlers() {
                 case "create-admin-promo": await createAdminPromo(); break;
                 case "add-vip-user": await addApprovedUser(); break;
                 case "remove-vip-user": await removeApprovedUser(Number(target.dataset.userId)); break;
-                case "toggle-gift-drawer": toggleGiftDrawer(target); break;
+                case "toggle-gift-drawer":
+                    if (!event.target.closest("button, input, textarea, label")) toggleGiftDrawer(target);
+                    break;
+                case "load-admin-users": await loadAdminUsers(!adminUsersState.initialized); break;
+                case "open-admin-profile": await openAdminProfile(Number(target.dataset.userId)); break;
+                case "contact-admin-user": toggleAdminContact(target); break;
+                case "send-admin-message": await sendAdminMessage(target); break;
                 case "gift-promo":
                     event.stopPropagation();
                     await giftPromoToUser(Number(target.dataset.userId), target.dataset.username || "");
