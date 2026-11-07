@@ -8,14 +8,24 @@ const { chromium } = require('playwright');
 
 const root = path.resolve(__dirname, '..');
 const expectedAnswers = [
-    "На вкладке «Тоннель» нажмите кнопку, чтобы получить персональный VLESS-ключ. Сам системный VPN затем включается в Happ, Hiddify, v2rayNG или другом клиенте.",
-    "После получения конфига нажмите «Копировать» и импортируйте его в Happ, Hiddify, v2rayNG или другой VLESS-клиент.",
-    "Скорость и задержка зависят от VPS, маршрута, нагрузки и провайдера. Mini App не измеряет пропускную способность туннеля.",
-    "VLESS-ключ персональный. Ограничение числа одновременных устройств пока не контролируется backend, поэтому не передавайте ключ другим.",
-    "Чтобы увеличить процент реферальной программы перейдите во вкладку 'Игры', запускайте сканирование радара и ловите скоростные кометы!",
-    "Доступ к Охоте на кометы заблокирован, если у вас нет активной подписки VPN. Приобретите любой тариф на вкладке Кабинет.",
-    "Кометы пролетают через зону действия космического радара. Успейте кликнуть по комете, чтобы выбить бонус!",
-    "Да, VLESS работает на смартфонах, ПК (Windows/macOS/Linux) и роутерах Keenetic!"
+    "Перейдите во вкладку «Туннель», нажмите фиолетовую кнопку и дождитесь подключения. Затем скопируйте ваш VLESS-ключ и вставьте его в приложение-клиент, например v2RayTun, HAPP или другое совместимое приложение.",
+    "После подключения во вкладке «Туннель» нажмите кнопку «Скопировать». Полученный ключ вставьте в приложение-клиент.",
+    "Наши серверы имеют пропускную способность до 1 Гбит/с. В будущем планируется увеличение скорости. Фактическая скорость подключения зависит от сети и устройства.",
+    "К одному ключу можно подключить до 10 устройств. Каждое дополнительное устройство оплачивается отдельно. Стоимость одинакова для всех тарифов.",
+    "Перейдите в раздел «Игры», ловите кометы и получайте увеличение реферального процента и другие бонусы.",
+    "Охота на кометы доступна только пользователям с активной подпиской SOL VPN. Приобрести подписку можно во вкладке «Кабинет».",
+    "Дождитесь появления кометы в зоне действия радара. Нажмите на вышку, затем коснитесь кометы, чтобы поймать её.",
+    "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения."
+];
+const expectedQuestions = [
+    "Как подключить VPN?",
+    "Где взять VLESS-ключ?",
+    "Какая максимальная скорость?",
+    "Сколько устройств можно подключить?",
+    "Как повысить процент по реферальной системе?",
+    "Почему заблокированы игры?",
+    "Как ловить кометы?",
+    "Работает ли VPN на ПК?"
 ];
 
 async function main() {
@@ -64,7 +74,7 @@ async function main() {
         return page;
     }
     async function settled(page, id) {
-        await page.waitForFunction(id => faqState.animations.length === 0 && document.querySelector('#terminal-text').textContent === faqAnswers[id], id);
+        await page.waitForFunction(id => faqState.animations.length === 0 && !faqState.heightAnimation && document.querySelector('#terminal-text').textContent === faqAnswers[id], id);
         await page.waitForTimeout(60);
     }
     async function assertLayout(page) {
@@ -90,6 +100,7 @@ async function main() {
         const page = await newPage();
         await check('all 8 answers, preserved whitespace and single persistent selection', async () => {
             assert.equal(await page.locator('.faq-btn').count(), 8);
+            assert.deepEqual(await page.locator('.faq-btn > span').allTextContents(), expectedQuestions);
             for (let id = 1; id <= 8; id++) {
                 await page.locator(`.faq-btn[data-faq-id="${id}"]`).click();
                 await settled(page, id);
@@ -125,50 +136,98 @@ async function main() {
             await page.waitForTimeout(450);
             assert.deepEqual(await styles(), after);
         });
-        await check('outgoing characters shrink and fade independently; selection updates immediately', async () => {
-            await page.evaluate(() => answerFAQ(8));
-            await settled(page, 8);
-            await page.evaluate(() => answerFAQ(1));
-            await page.waitForTimeout(80);
-            const state = await page.evaluate(() => ({
-                text: document.querySelector('#terminal-text').textContent,
-                opacities: Array.from(document.querySelectorAll('.faq-glyph'), glyph => Number(getComputedStyle(glyph).opacity)),
-                transform: getComputedStyle(document.querySelector('.faq-glyph')).transform,
-                selected: document.querySelector('.faq-btn[aria-pressed="true"]').dataset.faqId
-            }));
-            assert.equal(state.text, expectedAnswers[7]);
-            assert.equal(state.selected, '1');
-            assert.ok(state.opacities[0] < state.opacities.at(-1));
-            assert.notEqual(state.transform, 'matrix(1, 0, 0, 1, 0, 0)');
+        await check('old and new letters overlap as a continuous wave with no empty frame', async () => {
+            await page.evaluate(() => answerFAQ(5)); await settled(page, 5);
+            const evidence = await page.evaluate(async () => {
+                answerFAQ(1);
+                const samples = [];
+                for (let i = 0; i < 100; i++) {
+                    const outgoing = Array.from(document.querySelectorAll('.faq-outgoing-layer .faq-glyph'));
+                    const incoming = Array.from(document.querySelectorAll('.faq-current-layer .faq-glyph'));
+                    const visible = list => list.filter(g => Number(getComputedStyle(g).opacity) > 0.04).length;
+                    samples.push({ old: visible(outgoing), next: visible(incoming),
+                        oldTail: outgoing.length ? Number(getComputedStyle(outgoing.at(-1)).opacity) : 0,
+                        newHead: incoming.length ? Number(getComputedStyle(incoming[0]).opacity) : 0,
+                        oldHeadScale: outgoing.length ? getComputedStyle(outgoing[0]).transform : '',
+                        oldHeadBlur: outgoing.length ? getComputedStyle(outgoing[0]).filter : '',
+                        newTail: incoming.length ? Number(getComputedStyle(incoming.at(-1)).opacity) : 0 });
+                    await new Promise(resolve => setTimeout(resolve, 16));
+                }
+                return samples;
+            });
+            assert.ok(evidence.every(frame => frame.old + frame.next > 0), 'terminal must never be empty');
+            assert.ok(evidence.some(frame => frame.newHead > 0.1 && frame.oldTail > 0.9), 'new prefix must appear before old tail disappears');
+            assert.ok(evidence.some(frame => frame.newHead > 0.8 && frame.newTail < 0.1), 'wave must travel left to right');
+            assert.ok(evidence.some(frame => frame.oldHeadScale.includes('matrix(') && frame.oldHeadBlur !== 'blur(0px)'));
             await settled(page, 1);
         });
-        await check('answer height grows and shrinks through intermediate frames without reflowing words', async () => {
-            for (const id of [8, 1]) {
-                await page.evaluate(id => answerFAQ(id), id);
-                await page.waitForFunction(id => document.querySelector('#terminal-text').textContent === faqAnswers[id], id);
-                const samples = await page.evaluate(async () => {
+        await check('short/long height changes preserve word layout and never clip readable glyphs', async () => {
+            for (const id of [5, 1]) {
+                const samples = await page.evaluate(async id => {
+                    answerFAQ(id);
                     const box = document.querySelector('#terminal-answer-viewport');
-                    const glyphs = Array.from(document.querySelectorAll('.faq-glyph'));
-                    const positions = () => glyphs.map(glyph => `${glyph.offsetTop}:${glyph.offsetLeft}`).join('|');
-                    const startPositions = positions();
-                    const heights = [];
-                    for (let i = 0; i < 12; i++) {
+                    const incoming = document.querySelector('.faq-current-layer');
+                    const positions = () => Array.from(incoming.querySelectorAll('.faq-glyph'), glyph => `${glyph.offsetTop}:${glyph.offsetLeft}`).join('|');
+                    const startPositions = positions(), heights = [];
+                    let clipped = 0;
+                    for (let i = 0; i < 65; i++) {
                         heights.push(box.getBoundingClientRect().height);
-                        await new Promise(resolve => setTimeout(resolve, 40));
+                        const bounds = box.getBoundingClientRect();
+                        for (const glyph of document.querySelectorAll('#terminal-text .faq-glyph')) {
+                            if (Number(getComputedStyle(glyph).opacity) > 0.25 && glyph.getBoundingClientRect().bottom > bounds.bottom + 1) clipped++;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, 35));
                     }
-                    return { heights, stableLines: startPositions === positions() };
-                });
+                    return { heights, stableLines: startPositions === positions(), clipped };
+                }, id);
                 assert.ok(new Set(samples.heights.map(h => Math.round(h))).size > 3, JSON.stringify(samples));
-                const first = samples.heights[0], last = samples.heights.at(-1);
-                assert.ok(id === 8 ? last < first : last > first, JSON.stringify(samples));
+                assert.ok(id === 5 ? samples.heights.at(-1) < samples.heights[0] : samples.heights.at(-1) > samples.heights[0]);
                 assert.equal(samples.stableLines, true);
-                await settled(page, id);
-                await assertLayout(page);
+                assert.equal(samples.clipped, 0);
+                await settled(page, id); await assertLayout(page);
             }
+        });
+        await check('interruption freezes the current frame and keeps only two visual layers', async () => {
+            const evidence = await page.evaluate(async () => {
+                answerFAQ(5);
+                await new Promise(resolve => setTimeout(resolve, 330));
+                const before = Array.from(document.querySelectorAll('#terminal-text .faq-glyph'))
+                    .filter(g => Number(getComputedStyle(g).opacity) > 0.02)
+                    .map(g => ({ node: g, rect: g.getBoundingClientRect(), opacity: Number(getComputedStyle(g).opacity) }));
+                answerFAQ(2);
+                const drift = Math.max(0, ...before.map(frame => {
+                    const box = frame.node.getBoundingClientRect();
+                    return Math.max(Math.abs(box.left-frame.rect.left), Math.abs(box.top-frame.rect.top), Math.abs(Number(getComputedStyle(frame.node).opacity)-frame.opacity));
+                }));
+                let maxLayers = 0, maxGlyphs = 0;
+                for (let round=0; round<3; round++) for (let id=1; id<=8; id++) {
+                    answerFAQ(id);
+                    maxLayers = Math.max(maxLayers, document.querySelector('#terminal-text').children.length);
+                    maxGlyphs = Math.max(maxGlyphs, document.querySelectorAll('#terminal-text .faq-glyph').length);
+                    await new Promise(resolve => setTimeout(resolve, 40));
+                }
+                return { drift, maxLayers, maxGlyphs };
+            });
+            assert.ok(evidence.drift < 0.6, JSON.stringify(evidence));
+            assert.equal(evidence.maxLayers, 2);
+            assert.ok(evidence.maxGlyphs < 3 * Math.max(...expectedAnswers.map(text => text.length)), JSON.stringify(evidence));
+            await settled(page, 8);
+            assert.equal(await page.locator('.faq-outgoing-layer').count(), 0);
+            assert.equal(await page.locator('#terminal-text > div').count(), 1);
+        });
+        await check('repeated taps on the same question do not restart the wave', async () => {
+            const result = await page.evaluate(() => {
+                answerFAQ(7);
+                const revision = faqState.revision, animations = faqState.animations;
+                for(let i=0;i<30;i++) answerFAQ(7);
+                return { sameRevision: faqState.revision === revision, sameAnimations: faqState.animations === animations };
+            });
+            assert.deepEqual(result, { sameRevision: true, sameAnimations: true });
+            await settled(page, 7);
         });
         await check('rapid switches during exit and entry cannot restore a stale answer', async () => {
             await page.evaluate(async () => {
-                for (const id of [2, 7, 3, 4, 6]) {
+                for (const id of [1, 2, 3, 4, 5, 6, 7, 8]) {
                     answerFAQ(id);
                     await new Promise(resolve => setTimeout(resolve, 35));
                 }
@@ -176,7 +235,7 @@ async function main() {
             await page.waitForTimeout(400);
             await page.evaluate(() => answerFAQ(8));
             await settled(page, 8);
-            await page.waitForTimeout(900);
+            await page.waitForTimeout(1800);
             assert.equal(await page.locator('#terminal-text').textContent(), expectedAnswers[7]);
             assert.equal(await page.evaluate(() => document.querySelector('#terminal-text').getAnimations({ subtree: true }).length), 0);
             assert.equal(await page.evaluate(() => Array.from(document.querySelectorAll('.faq-glyph')).every(g => getComputedStyle(g).opacity === '1')), true);
@@ -191,8 +250,8 @@ async function main() {
         await check('mobile, narrow, landscape and desktop layouts; last question clears fixed fade', async () => {
             for (const viewport of [{ width: 280, height: 568 }, { width: 320, height: 568 }, { width: 390, height: 844 }, { width: 430, height: 932 }, { width: 640, height: 360 }, { width: 768, height: 1024 }]) {
                 await page.setViewportSize(viewport);
-                await page.evaluate(() => answerFAQ(faqState.selectedId === 1 ? 8 : 1));
-                await page.waitForTimeout(1000);
+                const selected = await page.evaluate(() => { const id = faqState.selectedId === 1 ? 5 : 1; answerFAQ(id); return id; });
+                await settled(page, selected);
                 await assertLayout(page);
                 const geometry = await page.evaluate(() => {
                     const scroll = document.querySelector('.info-scroll-area');
@@ -247,14 +306,51 @@ async function main() {
             await assertLayout(fallbackPage);
             await fallbackPage.context().close();
         });
+        await check('touch input at Android mobile dimensions runs the same continuous wave', async () => {
+            const mobile = await newPage({ viewport: { width: 393, height: 851 }, isMobile: true, hasTouch: true });
+            await mobile.locator('.faq-btn[data-faq-id="1"]').tap(); await settled(mobile, 1);
+            await mobile.locator('.faq-btn[data-faq-id="5"]').tap(); await settled(mobile, 5);
+            await assertLayout(mobile);
+            await mobile.context().close();
+        });
+        await check('spaces, newlines, numbers, punctuation and grapheme clusters remain intact', async () => {
+            await page.emulateMedia({ reducedMotion: 'no-preference' });
+            const text = 'А  12, e\u0301 — тест.\n\nСледующая строка!';
+            await page.evaluate(text => animateDipText(text), text);
+            await page.waitForFunction(text => faqState.animations.length === 0 && !faqState.heightAnimation && document.querySelector('#terminal-text').textContent === text, text);
+            assert.equal(await page.locator('#terminal-text').textContent(), text);
+            assert.equal(await page.locator('.faq-glyph').count(), Array.from(new Intl.Segmenter('ru', { granularity: 'grapheme' }).segment(text)).filter(item => !/^\s+$/u.test(item.segment)).length);
+            await assertLayout(page);
+            await page.evaluate(() => { faqState.selectedId = null; answerFAQ(1); }); await settled(page, 1);
+        });
         if (process.env.SOL_FAQ_SCREENSHOT_DIR) {
             await fs.mkdir(process.env.SOL_FAQ_SCREENSHOT_DIR, { recursive: true });
             for (const width of [320, 390]) {
                 await page.setViewportSize({ width, height: 844 });
                 await page.evaluate(() => { document.activeElement.blur(); answerFAQ(1); document.querySelector('#screen-info').scrollTop = 0; document.querySelector('.info-scroll-area').scrollTop = 0; });
-                await page.waitForTimeout(500);
+                await settled(page, 1);
                 await page.screenshot({ path: path.join(process.env.SOL_FAQ_SCREENSHOT_DIR, `info-${width}.png`) });
             }
+        }
+        if (process.env.SOL_FAQ_PREVIEW_DIR) {
+            const directory = process.env.SOL_FAQ_PREVIEW_DIR;
+            await fs.mkdir(directory, { recursive: true });
+            await page.emulateMedia({ reducedMotion: 'no-preference' });
+            await page.setViewportSize({ width: 390, height: 740 });
+            await page.evaluate(() => { document.activeElement.blur(); document.querySelector('#screen-info').scrollTop = 0; answerFAQ(5); });
+            await settled(page, 5);
+            const frames = [], start = Date.now();
+            let long = false, short = false;
+            while (Date.now() - start < 6000) {
+                const elapsed = Date.now() - start;
+                if (!long && elapsed > 450) { await page.evaluate(() => answerFAQ(1)); long = true; }
+                if (!short && elapsed > 3300) { await page.evaluate(() => answerFAQ(5)); short = true; }
+                const filename = path.join(directory, `frame-${String(frames.length).padStart(3, '0')}.png`);
+                frames.push({ path: filename, time: Date.now() - start });
+                await page.screenshot({ path: filename });
+                await page.waitForTimeout(65);
+            }
+            await fs.writeFile(path.join(directory, 'frames.json'), JSON.stringify(frames));
         }
         assert.deepEqual(errors, [], 'browser JavaScript errors');
         console.log(`${checks} checks passed; no browser JavaScript errors.`);

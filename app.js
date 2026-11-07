@@ -1493,15 +1493,25 @@ async function giftPromoToUser(userId, username) {
 const defaultInfoText = "Нажмите на любой вопрос ниже. Ваш ответ появится здесь. Если нужной темы нет — напишите в нашу техподдержку.";
 
 const faqAnswers = {
-    1: "На вкладке «Тоннель» нажмите кнопку, чтобы получить персональный VLESS-ключ. Сам системный VPN затем включается в Happ, Hiddify, v2rayNG или другом клиенте.",
-    2: "После получения конфига нажмите «Копировать» и импортируйте его в Happ, Hiddify, v2rayNG или другой VLESS-клиент.",
-    3: "Скорость и задержка зависят от VPS, маршрута, нагрузки и провайдера. Mini App не измеряет пропускную способность туннеля.",
-    4: "VLESS-ключ персональный. Ограничение числа одновременных устройств пока не контролируется backend, поэтому не передавайте ключ другим.",
-    5: "Чтобы увеличить процент реферальной программы перейдите во вкладку 'Игры', запускайте сканирование радара и ловите скоростные кометы!",
-    6: "Доступ к Охоте на кометы заблокирован, если у вас нет активной подписки VPN. Приобретите любой тариф на вкладке Кабинет.",
-    7: "Кометы пролетают через зону действия космического радара. Успейте кликнуть по комете, чтобы выбить бонус!",
-    8: "Да, VLESS работает на смартфонах, ПК (Windows/macOS/Linux) и роутерах Keenetic!"
+    1: "Перейдите во вкладку «Туннель», нажмите фиолетовую кнопку и дождитесь подключения. Затем скопируйте ваш VLESS-ключ и вставьте его в приложение-клиент, например v2RayTun, HAPP или другое совместимое приложение.",
+    2: "После подключения во вкладке «Туннель» нажмите кнопку «Скопировать». Полученный ключ вставьте в приложение-клиент.",
+    3: "Наши серверы имеют пропускную способность до 1 Гбит/с. В будущем планируется увеличение скорости. Фактическая скорость подключения зависит от сети и устройства.",
+    4: "К одному ключу можно подключить до 10 устройств. Каждое дополнительное устройство оплачивается отдельно. Стоимость одинакова для всех тарифов.",
+    5: "Перейдите в раздел «Игры», ловите кометы и получайте увеличение реферального процента и другие бонусы.",
+    6: "Охота на кометы доступна только пользователям с активной подпиской SOL VPN. Приобрести подписку можно во вкладке «Кабинет».",
+    7: "Дождитесь появления кометы в зоне действия радара. Нажмите на вышку, затем коснитесь кометы, чтобы поймать её.",
+    8: "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения."
 };
+
+// Tune the local replacement and the bounded left-to-right wave here.
+const FAQ_ANIMATION = Object.freeze({
+    swapDurationMs: 280,
+    staggerMs: 12,
+    maxWaveMs: 1200,
+    overlapMs: 40,
+    heightDurationMs: 420,
+    blurPx: 1.4
+});
 
 const faqState = {
     initialized: false,
@@ -1509,6 +1519,9 @@ const faqState = {
     targetText: defaultInfoText,
     revision: 0,
     animations: [],
+    heightAnimation: null,
+    heightTarget: 0,
+    currentLayer: null,
     motionQuery: null,
     resizeObserver: null
 };
@@ -1521,19 +1534,32 @@ function updateFaqHeight() {
     const viewport = document.getElementById("terminal-answer-viewport");
     const content = document.getElementById("terminal-text");
     if (!viewport || !content) return;
-    const height = Math.ceil(content.getBoundingClientRect().height);
-    if (height > 0) viewport.style.height = `${height}px`;
+    const height = Math.ceil((faqState.currentLayer || content).getBoundingClientRect().height);
+    if (height <= 0) return;
+    if (faqState.heightAnimation) {
+        if (height !== faqState.heightTarget) {
+            const animation = faqState.heightAnimation;
+            const remainingDelay = Math.max(0, animation.effect.getTiming().delay - (animation.currentTime || 0));
+            animateFaqHeight(height, remainingDelay);
+        }
+    } else {
+        faqState.heightTarget = height;
+        viewport.style.height = `${height}px`;
+    }
 }
 
-function renderFaqCharacters(text, hidden = false) {
-    const container = document.getElementById("terminal-text");
+function createFaqLayer(text, hidden = false) {
+    const layer = document.createElement("div");
+    layer.className = "faq-current-layer";
     const fragment = document.createDocumentFragment();
+    let position = 0;
 
     // Word wrappers keep natural line breaks; actual spaces stay as text nodes.
     for (const token of text.split(/(\s+)/u)) {
         if (!token) continue;
         if (/^\s+$/u.test(token)) {
             fragment.appendChild(document.createTextNode(token));
+            position += Array.from(token).length;
             continue;
         }
         const word = document.createElement("span");
@@ -1545,15 +1571,24 @@ function renderFaqCharacters(text, hidden = false) {
             const glyph = document.createElement("span");
             glyph.className = "faq-glyph";
             glyph.textContent = character;
+            glyph.dataset.faqPosition = position++;
             if (hidden) {
                 glyph.style.opacity = "0";
-                glyph.style.transform = "scale(0.6)";
+                glyph.style.transform = "scale(0.7)";
+                glyph.style.filter = `blur(${FAQ_ANIMATION.blurPx}px)`;
             }
             word.appendChild(glyph);
         }
         fragment.appendChild(word);
     }
-    container.replaceChildren(fragment);
+    layer.appendChild(fragment);
+    return layer;
+}
+
+function renderFaqCharacters(text) {
+    const layer = createFaqLayer(text);
+    document.getElementById("terminal-text").replaceChildren(layer);
+    faqState.currentLayer = layer;
     updateFaqHeight();
 }
 
@@ -1562,35 +1597,61 @@ function cancelFaqAnimations() {
     const frames = faqState.animations.map(animation => {
         const glyph = animation.effect.target;
         const style = getComputedStyle(glyph);
-        return { animation, glyph, opacity: style.opacity, transform: style.transform };
+        return { animation, glyph, opacity: style.opacity, transform: style.transform, filter: style.filter };
     });
-    for (const { animation, glyph, opacity, transform } of frames) {
+    for (const { animation, glyph, opacity, transform, filter } of frames) {
         glyph.style.opacity = opacity;
         glyph.style.transform = transform;
+        glyph.style.filter = filter;
         animation.cancel();
     }
     faqState.animations = [];
+    const viewport = document.getElementById("terminal-answer-viewport");
+    if (faqState.heightAnimation) {
+        const height = viewport.getBoundingClientRect().height;
+        faqState.heightAnimation.cancel();
+        faqState.heightAnimation = null;
+        viewport.style.height = `${height}px`;
+    }
 }
 
-async function animateFaqCharacters(entering) {
-    const glyphs = Array.from(document.querySelectorAll("#terminal-text .faq-glyph"));
-    const frames = glyphs.map(glyph => {
+function snapshotFaqView() {
+    const container = document.getElementById("terminal-text");
+    const origin = container.getBoundingClientRect();
+    const frames = Array.from(container.querySelectorAll(".faq-glyph"), glyph => {
         const style = getComputedStyle(glyph);
-        return { glyph, opacity: style.opacity, transform: style.transform };
+        return { glyph, opacity: style.opacity, transform: style.transform, filter: style.filter };
+    }).filter(frame => Number(frame.opacity) > 0.01);
+    // Measure untransformed boxes in one batch, then preserve each visible glyph
+    // at exactly its current position. Repeated interruptions still use only two layers.
+    frames.forEach(({ glyph }) => { glyph.style.transform = "none"; });
+    const boxes = frames.map(({ glyph }) => glyph.getBoundingClientRect());
+    const outgoing = document.createElement("div");
+    outgoing.className = "faq-outgoing-layer";
+    frames.forEach(({ glyph, opacity, transform, filter }, index) => {
+        const box = boxes[index];
+        Object.assign(glyph.style, {
+            position: "absolute", left: `${box.left - origin.left}px`, top: `${box.top - origin.top}px`,
+            width: `${box.width}px`, height: `${box.height}px`, opacity, transform, filter
+        });
+        outgoing.appendChild(glyph);
     });
-    // Bound the total stagger even for long answers, without per-letter timers.
-    const step = Math.min(5, (entering ? 160 : 140) / Math.max(1, glyphs.length - 1));
-    const animations = frames.map(({ glyph, opacity, transform }, index) => glyph.animate([
-        { opacity, transform },
-        { opacity: entering ? 1 : 0, transform: entering ? "scale(1)" : "scale(0.6)" }
-    ], {
-        duration: entering ? 260 : 200,
-        delay: index * step,
-        easing: "cubic-bezier(0.4, 0, 0.2, 1)",
-        fill: "forwards"
-    }));
-    faqState.animations = animations;
-    await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+    return outgoing;
+}
+
+function animateFaqHeight(height, delay = 0) {
+    const viewport = document.getElementById("terminal-answer-viewport");
+    const current = viewport.getBoundingClientRect().height;
+    faqState.heightAnimation?.cancel();
+    viewport.classList.add("faq-wave-active");
+    viewport.style.height = `${height}px`;
+    faqState.heightTarget = height;
+    faqState.heightAnimation = viewport.animate([{ height: `${current}px` }, { height: `${height}px` }], {
+        duration: FAQ_ANIMATION.heightDurationMs, delay,
+        easing: "cubic-bezier(0.4, 0, 0.2, 1)", fill: "both"
+    });
+    // Cancellation may precede the height wait when a new answer interrupts the wave.
+    faqState.heightAnimation.finished.catch(() => {});
 }
 
 async function animateDipText(newText) {
@@ -1600,20 +1661,55 @@ async function animateDipText(newText) {
     const container = document.getElementById("terminal-text");
     const liveAnswer = document.getElementById("faq-answer-live");
     const reducedMotion = faqState.motionQuery?.matches || typeof container.animate !== "function";
-
-    if (!reducedMotion) {
-        await animateFaqCharacters(false);
-        if (revision !== faqState.revision) return;
-        cancelFaqAnimations();
-    }
-
-    renderFaqCharacters(newText, !reducedMotion);
+    const viewport = document.getElementById("terminal-answer-viewport");
     liveAnswer.textContent = newText;
-    if (!reducedMotion) {
-        await animateFaqCharacters(true);
-        if (revision !== faqState.revision) return;
-        cancelFaqAnimations();
+    if (reducedMotion) {
+        viewport.classList.remove("faq-wave-active");
+        renderFaqCharacters(newText);
+        return;
     }
+
+    const outgoing = snapshotFaqView();
+    const incoming = createFaqLayer(newText, true);
+    container.replaceChildren(outgoing, incoming);
+    faqState.currentLayer = incoming;
+    const oldGlyphs = Array.from(outgoing.querySelectorAll(".faq-glyph"));
+    const newGlyphs = Array.from(incoming.querySelectorAll(".faq-glyph"));
+    const positionOf = glyph => Number(glyph.dataset.faqPosition);
+    const lastPosition = Math.max(1, ...oldGlyphs.map(positionOf), ...newGlyphs.map(positionOf));
+    const step = Math.min(FAQ_ANIMATION.staggerMs, FAQ_ANIMATION.maxWaveMs / lastPosition);
+    const exitDuration = FAQ_ANIMATION.swapDurationMs / 2;
+    const enterOffset = Math.max(0, exitDuration - FAQ_ANIMATION.overlapMs);
+    const enterDuration = FAQ_ANIMATION.swapDurationMs - enterOffset;
+    const frames = oldGlyphs.map(glyph => ({ glyph, style: getComputedStyle(glyph) }));
+    const animations = frames.map(({ glyph, style }) => glyph.animate([
+        { opacity: style.opacity, transform: style.transform, filter: style.filter },
+        { opacity: 0, transform: "scale(0.55)", filter: `blur(${FAQ_ANIMATION.blurPx}px)` }
+    ], { duration: exitDuration, delay: positionOf(glyph) * step, easing: "ease-in-out", fill: "both" }));
+    animations.push(...newGlyphs.map(glyph => glyph.animate([
+        { opacity: 0, transform: "scale(0.7)", filter: `blur(${FAQ_ANIMATION.blurPx}px)` },
+        { opacity: 1, transform: "scale(1)", filter: "blur(0px)" }
+    ], { duration: enterDuration, delay: positionOf(glyph) * step + enterOffset, easing: "ease-out", fill: "both" })));
+    faqState.animations = animations;
+    const targetHeight = Math.ceil(incoming.getBoundingClientRect().height);
+    // Keep the old last line until its wave has faded; expanding begins immediately.
+    const shrinkDelay = targetHeight < viewport.getBoundingClientRect().height
+        ? Math.max(0, ...oldGlyphs.map(glyph => positionOf(glyph) * step + exitDuration - 20)) : 0;
+    animateFaqHeight(targetHeight, shrinkDelay);
+    await Promise.all(animations.map(animation => animation.finished.catch(() => {})));
+    if (revision !== faqState.revision) return;
+    // A resize/font load can replace the height animation while the wave is running.
+    while (faqState.heightAnimation) {
+        const heightAnimation = faqState.heightAnimation;
+        await heightAnimation.finished.catch(() => {});
+        if (revision !== faqState.revision) return;
+        if (heightAnimation === faqState.heightAnimation) break;
+    }
+    cancelFaqAnimations();
+    container.replaceChildren(incoming);
+    incoming.querySelectorAll(".faq-glyph").forEach(glyph => glyph.removeAttribute("style"));
+    viewport.classList.remove("faq-wave-active");
+    updateFaqHeight();
 }
 
 function initInfoFAQ() {
