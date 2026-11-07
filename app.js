@@ -1349,44 +1349,74 @@ const faqAnswers = {
     8: "🌐 Да, VLESS работает на смартфонах, ПК (Windows/macOS/Linux) и роутерах Keenetic!"
 };
 
+let faqRenderTimer = null;
+let faqHeightTimer = null;
+let faqAnimationVersion = 0;
+
 function animateDipText(newText) {
     const container = document.getElementById("terminal-text");
-    if (!container) return;
+    const terminalBox = document.getElementById("terminal-box-element");
+    if (!container || !terminalBox) return;
 
-    const currentWords = container.querySelectorAll(".word-glyph");
+    const version = ++faqAnimationVersion;
+    clearTimeout(faqRenderTimer);
+    clearTimeout(faqHeightTimer);
 
-    if (currentWords.length > 0) {
-        currentWords.forEach((word, idx) => {
-            setTimeout(() => { if (word) word.classList.add("dip-shrink"); }, idx * 12);
-        });
-        setTimeout(() => { renderNewWordsWithExpand(newText); }, currentWords.length * 12 + 160);
-    } else {
-        renderNewWordsWithExpand(newText);
-    }
-}
+    // Leave a brief, soft exit before the new answer is revealed character by character.
+    container.classList.add("is-changing");
+    faqRenderTimer = setTimeout(() => {
+        if (version !== faqAnimationVersion) return;
 
-function renderNewWordsWithExpand(text) {
-    const container = document.getElementById("terminal-text");
-    if (!container) return;
+        const oldHeight = terminalBox.getBoundingClientRect().height;
+        terminalBox.style.height = "";
+        container.replaceChildren();
 
-    container.innerHTML = "";
-    const words = text.split(" ");
+        const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        if (reducedMotion) {
+            container.textContent = newText;
+        } else {
+            const fragment = document.createDocumentFragment();
+            const chars = Array.from(newText);
+            const interval = Math.min(13, 800 / Math.max(chars.length, 1));
 
-    words.forEach((word, idx) => {
-        const span = document.createElement("span");
-        span.className = "word-glyph dip-shrink";
-        span.innerText = word;
-        container.appendChild(span);
-        setTimeout(() => { if (span) span.classList.remove("dip-shrink"); }, 40 + idx * 20);
-    });
+            chars.forEach((character, index) => {
+                const span = document.createElement("span");
+                span.className = "faq-char";
+                span.textContent = character;
+                span.style.setProperty("--char-delay", `${Math.round(index * interval)}ms`);
+                fragment.appendChild(span);
+            });
+            container.appendChild(fragment);
+        }
+
+        const newHeight = terminalBox.getBoundingClientRect().height;
+        if (!reducedMotion && Math.abs(newHeight - oldHeight) > 1) {
+            terminalBox.style.height = `${oldHeight}px`;
+            // Force layout so the next frame can interpolate between two pixel heights.
+            void terminalBox.offsetHeight;
+            requestAnimationFrame(() => {
+                if (version === faqAnimationVersion) terminalBox.style.height = `${newHeight}px`;
+            });
+            faqHeightTimer = setTimeout(() => {
+                if (version === faqAnimationVersion) terminalBox.style.height = "";
+            }, 340);
+        }
+
+        container.classList.remove("is-changing");
+    }, window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 190);
 }
 
 function answerFAQ(id) {
     const text = faqAnswers[id];
-    if (text) {
-        animateDipText(text);
-        if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
-    }
+    if (!text) return;
+
+    document.querySelectorAll(".faq-btn").forEach(button => {
+        const selected = Number(button.dataset.faqId) === id;
+        button.classList.toggle("active", selected);
+        button.setAttribute("aria-pressed", String(selected));
+    });
+    animateDipText(text);
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
 // ==========================================
