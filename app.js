@@ -19,6 +19,9 @@ let isSubscribedUser = false;
 let currentVlessUri = "";
 let selectedMonths = null;
 let paymentInProgress = false;
+let paymentCatalog = { enabled: false, tariffs: [] };
+let paymentAttempts = {};
+let paymentOwner = null;
 let currentGameSession = "";
 let serverOnline = false;
 
@@ -91,7 +94,9 @@ async function apiFetch(path, options = {}) {
         const detail = Array.isArray(body.detail)
             ? body.detail.map(item => item.msg || String(item)).join("; ")
             : body.detail;
-        throw new Error(detail || `Ошибка API ${response.status}`);
+        const error = new Error(detail || `Ошибка API ${response.status}`);
+        error.status = response.status;
+        throw error;
     }
     return body;
 }
@@ -103,6 +108,19 @@ function applyBootstrap(data) {
     if (data.user) {
         userData = { ...data.user };
         isAdmin = Boolean(data.is_admin ?? data.user.is_admin);
+        const owner = String(data.user.id ?? data.user.user_id ?? "");
+        if (owner !== paymentOwner) {
+            paymentOwner = owner;
+            paymentAttempts = {};
+            try {
+                const saved = JSON.parse(localStorage.getItem(`sol-stars:${owner}`) || "{}");
+                for (const [months, attempt] of Object.entries(saved)) {
+                    if ([1, 3, 6, 12].includes(Number(months)) && attempt.months === Number(months)
+                        && Number.isSafeInteger(attempt.amount) && attempt.amount > 0
+                        && /^[0-9a-f-]{36}$/i.test(attempt.key)) paymentAttempts[months] = attempt;
+                }
+            } catch (_) { /* The current tab can still retry when storage is unavailable. */ }
+        }
     }
 
     if (data.subscription) {
@@ -110,6 +128,8 @@ function applyBootstrap(data) {
         updateSubscriptionUI(data.subscription);
     }
 
+    paymentCatalog = data.payment?.currency === "XTR" && data.payment?.channel === "telegram_stars"
+        ? data.payment : { enabled: false, tariffs: [] };
     if (Array.isArray(data.tariffs)) {
         data.tariffs.forEach(t => {
             tariffCatalog[Number(t.months)] = t;
@@ -117,6 +137,7 @@ function applyBootstrap(data) {
         });
         updateTariffPricesUI();
     }
+    if (selectedMonths) selectTariff(selectedMonths);
 
     if (data.referral) {
         currentRefPercent = Number(data.referral.percent ?? 5.0);
@@ -980,8 +1001,29 @@ function fillReelCards() {
     reel.style.transform = `translateY(-${randomIndex * 40}px)`;
 }
 
+function persistPaymentAttempts() {
+    try { localStorage.setItem(`sol-stars:${paymentOwner}`, JSON.stringify(paymentAttempts)); } catch (_) {}
+}
+
+function paymentQuote(months) {
+    const current = paymentCatalog.tariffs?.find(item => Number(item.months) === Number(months));
+    const attempt = paymentAttempts[months];
+    return current && attempt ? { ...current, amount: attempt.amount, discount_percent: attempt.discountPercent ?? 0 } : current;
+}
+
+function newPaymentKey() {
+    if (crypto.randomUUID) return crypto.randomUUID();
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    bytes[6] = (bytes[6] & 15) | 64;
+    bytes[8] = (bytes[8] & 63) | 128;
+    const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function tariffPriceText(tariff) {
     if (!tariff) return "—";
+    const quote = paymentQuote(tariff.months);
+    if (paymentCatalog.enabled && Number.isSafeInteger(quote?.amount) && quote.amount > 0) return `${quote.amount} ⭐`;
     if (tariff.price_rub !== undefined) return String(tariff.price_rub);
     const kopecks = Number(tariff.price_kopecks);
     if (!Number.isInteger(kopecks)) return "—";
@@ -1004,10 +1046,11 @@ function updateTariffPricesUI() {
         const tagEl = document.getElementById(`discount-tag-${months}m`);
         if (!tariff || !priceEl || !cardEl) return;
 
-        const discount = Number(tariff.discount_percent || 0);
+        const discount = Number((paymentCatalog.enabled ? paymentQuote(months)?.discount_percent : tariff.discount_percent) || 0);
         const shown = cardEl.classList.contains("show-card");
         const selected = Number(selectedMonths) === months;
-        priceEl.innerText = `${tariffPriceText(tariff)} ₽`;
+        const price = tariffPriceText(tariff);
+        priceEl.innerText = price.includes("⭐") ? price : `${price} ₽`;
 
         cardEl.className = `${baseClasses[months]}${discount > 0 ? ` discounted-neon-${months}m` : ""}${shown ? " show-card" : ""}${selected ? " selected-tariff" : ""}`;
         if (tagEl) {
@@ -1499,7 +1542,7 @@ const faqAnswers = {
     4: "К одному ключу можно подключить до 10 устройств. Каждое дополнительное устройство оплачивается отдельно. Стоимость одинакова для всех тарифов.",
     5: "Перейдите в раздел «Игры», ловите кометы и получайте увеличение реферального процента и другие бонусы.",
     6: "Охота на кометы доступна только пользователям с активной подпиской SOL VPN. Приобрести подписку можно во вкладке «Кабинет».",
-    7: "Дождитесь появления кометы в зоне действия радара. Нажмите на вышку, затем коснитесь кометы, чтобы поймать её.",
+    7: "Дождитесь появления кометы в зоне действия радара. Нажмите мышкой или кликните пальцем по комете, чтобы поймать её.",
     8: "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения."
 };
 
@@ -1781,31 +1824,90 @@ function toggleTariffs(forceOpen = false) {
 
 async function paySelectedTariff() {
     if (!selectedMonths || paymentInProgress) return;
+    const months = selectedMonths;
+    const quote = paymentQuote(months);
+    if (!paymentCatalog.enabled || !Number.isSafeInteger(quote?.amount) || quote.amount < 1) {
+        showToast("Оплата Stars пока недоступна", "error");
+        return;
+    }
+    if (!tg?.openInvoice) {
+        showToast("Telegram openInvoice недоступен", "error");
+        return;
+    }
     paymentInProgress = true;
     tg?.MainButton?.disable?.();
     try {
+        // Reuse a request after a lost response; never trust the client to set its price.
+        if (!paymentAttempts[months]) {
+            paymentAttempts[months] = { months, amount: quote.amount,
+                discountPercent: Number(quote.discount_percent || 0), key: newPaymentKey(), orderId: null };
+            persistPaymentAttempts();
+        }
+        const attempt = paymentAttempts[months];
         const result = await apiFetch("/api/payments/invoice", {
             method: "POST",
-            body: JSON.stringify({ months: Number(selectedMonths) })
+            headers: { "Idempotency-Key": attempt.key },
+            body: JSON.stringify({ months, expected_currency: "XTR", expected_amount: quote.amount })
         });
-        if (!tg?.openInvoice) throw new Error("Telegram openInvoice недоступен");
+        if (result.currency !== "XTR" || result.amount !== quote.amount) throw new Error("Стоимость изменилась; обновите тарифы");
+        attempt.orderId = result.order_id;
+        persistPaymentAttempts();
+        if (result.status === "paid") {
+            delete paymentAttempts[months];
+            persistPaymentAttempts();
+            paymentInProgress = false;
+            await loadBootstrap(false);
+            selectTariff(selectedMonths);
+            showToast("✅ Сервер подтвердил ранее полученную оплату");
+            return;
+        }
+        if (["refunded", "review", "error"].includes(result.status)) {
+            if (result.status === "refunded") { delete paymentAttempts[months]; persistPaymentAttempts(); }
+            throw new Error("Счёт закрыт или требует проверки. Обратитесь в /paysupport");
+        }
+        if (!result.invoice_url) throw new Error("Состояние счёта уточняется. Повторите попытку позже или обратитесь в /paysupport");
         tg.MainButton?.showProgress?.();
         tg.openInvoice(result.invoice_url, async status => {
-            paymentInProgress = false;
-            tg.MainButton?.enable?.();
-            tg.MainButton?.hideProgress?.();
-            if (status === "paid") {
-                showToast("✅ Оплата прошла. Обновляю подписку...");
-                await new Promise(resolve => setTimeout(resolve, 900));
-                await loadBootstrap(false);
-            } else if (status === "failed") {
-                showToast("🚨 Оплата не прошла", "error");
+            try {
+                if (status === "paid" || status === "pending") {
+                    showToast("Проверяю оплату на сервере…");
+                    let verified = false;
+                    for (let attempt = 0; attempt < 8; attempt++) {
+                        const order = await apiFetch(`/api/payments/orders/${encodeURIComponent(result.order_id)}`);
+                        if (order.status === "paid") {
+                            await loadBootstrap(false);
+                            showToast("✅ Сервер подтвердил оплату и обновил подписку");
+                            delete paymentAttempts[months];
+                            persistPaymentAttempts();
+                            verified = true;
+                            break;
+                        }
+                        if (["refunded", "review", "error"].includes(order.status)) break;
+                        await new Promise(resolve => setTimeout(resolve, 750));
+                    }
+                    if (!verified) showToast("Подтверждение ещё не получено. Проверьте позже или напишите /paysupport");
+                } else if (status === "cancelled") {
+                    showToast("Оплата отменена");
+                } else if (status === "failed") {
+                    showToast("Оплата не прошла. Можно повторно открыть тот же счёт", "error");
+                }
+            } catch (_) {
+                showToast("Не удалось проверить оплату. Проверьте позже или напишите /paysupport", "error");
+            } finally {
+                paymentInProgress = false;
+                tg.MainButton?.hideProgress?.();
+                selectTariff(selectedMonths);
             }
         });
     } catch (error) {
+        if (error.status === 409 && /Стоимость изменилась|Повторный запрос/.test(error.message)) {
+            delete paymentAttempts[months];
+            persistPaymentAttempts();
+        }
         paymentInProgress = false;
-        tg?.MainButton?.enable?.();
         tg?.MainButton?.hideProgress?.();
+        selectTariff(selectedMonths);
+        await loadBootstrap(false);
         showToast(`🚨 Оплата: ${error.message}`, "error");
     }
 }
@@ -1818,8 +1920,11 @@ function selectTariff(months) {
 
     const price = tariffPriceText(tariffCatalog[months]);
     if (tg?.MainButton) {
-        tg.MainButton.setText(`💳 Оплатить ${months} мес. — ${price} ₽`);
-        tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: !paymentInProgress, is_visible: true });
+        const quote = paymentQuote(months);
+        const available = paymentCatalog.enabled && Number.isSafeInteger(quote?.amount) && quote.amount > 0;
+        tg.MainButton.setText(available ? `⭐ Оплатить ${months} мес. — ${price}` : "Оплата Stars пока недоступна");
+        tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: available && !paymentInProgress, is_visible: true });
+        if (available && !paymentInProgress) tg.MainButton.enable?.(); else tg.MainButton.disable?.();
         tg.MainButton.show();
     }
 }
