@@ -15,7 +15,7 @@
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=5006">
+    <link rel="stylesheet" href="style.css?v=5007">
 
     <style>
         /* 🚨 МАКСИМАЛЬНЫЙ ПРИОРИТЕТ ДЛЯ ХИТБОКСОВ СЛОЕВ ВЕРСТКИ 🚨 */
@@ -262,19 +262,7 @@
                     </div>
                 </div>
             </div>
-            <section class="payment-methods" id="payment-methods" aria-labelledby="payment-methods-title" hidden>
-                <h3 id="payment-methods-title">Оплата</h3>
-                <div class="payment-method-buttons">
-                    <button class="payment-method payment-method-rub" id="pay-yookassa" data-action="pay-yookassa" type="button" hidden>
-                        <span>ЮKassa</span><strong id="yookassa-price">—</strong>
-                    </button>
-                    <button class="payment-method payment-method-stars" id="pay-stars" data-action="pay-stars" type="button" hidden>
-                        <span>Telegram Stars</span><strong id="stars-price">—</strong>
-                    </button>
-                </div>
-                <p class="checkout-status" id="checkout-status" role="status" aria-live="polite"></p>
-                <button class="checkout-check" id="check-yookassa" data-action="check-yookassa" type="button" hidden>Проверить оплату</button>
-            </section>
+            <div class="payment-order-deadlines" id="profile-payment-deadlines" aria-label="Срок оплаты созданных счетов" hidden></div>
         </div>
     </div>
 
@@ -339,6 +327,7 @@
             </div>
             <div class="terminal-answer-viewport" id="terminal-answer-viewport">
                 <div class="terminal-body" id="terminal-text" aria-hidden="true">Нажмите на любой вопрос ниже. Ваш ответ появится здесь. Если нужной темы нет — напишите в нашу техподдержку.</div>
+                <div class="faq-answer-actions" id="faq-answer-actions" aria-label="Где купить Telegram Stars" hidden></div>
             </div>
             <p class="faq-sr-only" id="faq-answer-live" role="status" aria-live="polite" aria-atomic="true">Нажмите на любой вопрос ниже. Ваш ответ появится здесь. Если нужной темы нет — напишите в нашу техподдержку.</p>
         </div>
@@ -354,6 +343,14 @@
                         <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="8" cy="8" r="4.5"/><path d="m11.2 11.2 9.3 9.3m-3-3 2.5-2.5m-5.5-.5 2.5-2.5"/><circle cx="7" cy="7" r=".7"/></svg>
                         <span>Где взять VLESS-ключ?</span>
                     </button>
+                    <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="9" aria-pressed="false" aria-controls="faq-answer-live faq-answer-actions">
+                        <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m2 8 3-3 4 2m13 1-3-3-4 2M2 8l4 9 3 1m13-10-4 9-3 2m-6-1 3 2 5-4-5-5-2 2c-1 1-3-1-2-2l4-4h3l3 2M5 6l-2 2m16-2 2 2"/><path d="m8 16 3 3m0-5 3 3"/></svg>
+                        <span>Где купить Telegram Stars?</span>
+                    </button>
+                    <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="8" aria-pressed="false" aria-controls="faq-answer-live">
+                        <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M2.5 13h19M12 16.5v4m-4.5 0h9"/></svg>
+                        <span>Работает ли VPN на ПК?</span>
+                    </button>
                     <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="3" aria-pressed="false" aria-controls="faq-answer-live">
                         <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 19a9 9 0 1 1 16 0H4Zm8-14v2M5 9l1.5 1M19 9l-1.5 1m-10 6H6m12 0h-1.5M12 15l4-5"/><circle cx="12" cy="15" r="1.5"/></svg>
                         <span>Какая максимальная скорость?</span>
@@ -361,10 +358,6 @@
                     <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="4" aria-pressed="false" aria-controls="faq-answer-live">
                         <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M13 16H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v3M8 16v4m-3 0h8"/><rect x="15" y="10" width="7" height="11" rx="1.5"/><path d="M18 18.5h1"/></svg>
                         <span>Сколько устройств можно подключить?</span>
-                    </button>
-                    <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="5" aria-pressed="false" aria-controls="faq-answer-live">
-                        <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 19 18 5"/><circle cx="6.5" cy="6.5" r="3"/><circle cx="17.5" cy="17.5" r="3"/></svg>
-                        <span>Как повысить процент по реферальной системе?</span>
                     </button>
                     <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="6" aria-pressed="false" aria-controls="faq-answer-live">
                         <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="4.5" y="10" width="15" height="11" rx="2.5"/><path d="M7.5 10V7a4.5 4.5 0 0 1 9 0v3m-4.5 5v2.5"/></svg>
@@ -374,9 +367,9 @@
                         <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 3v9l6.4-6.4M3 12h2m7 7v2m7-9h2"/><circle cx="9" cy="14" r="1"/></svg>
                         <span>Как ловить кометы?</span>
                     </button>
-                    <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="8" aria-pressed="false" aria-controls="faq-answer-live">
-                        <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M2.5 13h19M12 16.5v4m-4.5 0h9"/></svg>
-                        <span>Работает ли VPN на ПК?</span>
+                    <button class="faq-btn" type="button" data-action="answer-faq" data-faq-id="5" aria-pressed="false" aria-controls="faq-answer-live">
+                        <svg class="faq-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6 19 18 5"/><circle cx="6.5" cy="6.5" r="3"/><circle cx="17.5" cy="17.5" r="3"/></svg>
+                        <span>Как повысить процент по реферальной системе?</span>
                     </button>
                 </div>
             </div>
@@ -388,12 +381,12 @@
     <!-- ========================================== -->
     <div class="screen" id="screen-admin">
         <div class="admin-header">
-            <h2>👑 ПАНЕЛЬ УПРАВЛЕНИЯ</h2>
+            <h2><span class="admin-icon-slot" data-admin-icon="crown" aria-hidden="true"></span> ПАНЕЛЬ УПРАВЛЕНИЯ</h2>
         </div>
 
         <div class="admin-scroll-content">
             <div class="admin-card">
-                <div class="admin-card-title">🎁 СОЗДАТЬ ПРОМОКОД</div>
+                <div class="admin-card-title"><span class="admin-icon-slot" data-admin-icon="gift" aria-hidden="true"></span> СОЗДАТЬ ПРОМОКОД</div>
                 
                 <div class="promo-input-row" style="margin-bottom: 12px;">
                     <input type="text" id="admin-promo-name" placeholder="НАЗВАНИЕ (НАПР. VIP30)" style="text-transform: uppercase;">
@@ -402,11 +395,11 @@
                 <div class="admin-toggle-row">
                     <button class="admin-type-btn" id="btn-mode-days" data-action="toggle-admin-promo-type" data-type="days">
                         <div class="hitbox-overlay"></div>
-                        🎁 ДНИ
+                        <span class="admin-icon-slot" data-admin-icon="calendar" aria-hidden="true"></span> ДНИ
                     </button>
                     <button class="admin-type-btn" id="btn-mode-discount" data-action="toggle-admin-promo-type" data-type="discount">
                         <div class="hitbox-overlay"></div>
-                        🔥 СКИДКА
+                        <span class="admin-icon-slot" data-admin-icon="tag" aria-hidden="true"></span> СКИДКА
                     </button>
                 </div>
 
@@ -474,11 +467,11 @@
                 <div class="admin-toggle-row" style="margin-top: 12px;">
                     <button class="admin-type-btn sub-mode active-green" id="btn-limit-days" data-action="set-admin-limit" data-limit-type="lifetime_days">
                         <div class="hitbox-overlay"></div>
-                        ⏳ ДНИ ЖИЗНИ
+                        <span class="admin-icon-slot" data-admin-icon="calendar" aria-hidden="true"></span> ДНИ ЖИЗНИ
                     </button>
                     <button class="admin-type-btn sub-mode" id="btn-limit-count" data-action="set-admin-limit" data-limit-type="activations">
                         <div class="hitbox-overlay"></div>
-                        👥 АКТИВАЦИИ
+                        <span class="admin-icon-slot" data-admin-icon="users" aria-hidden="true"></span> АКТИВАЦИИ
                     </button>
                 </div>
 
@@ -505,17 +498,17 @@
 
                 <button class="admin-action-submit" data-action="create-admin-promo">
                     <div class="hitbox-overlay"></div>
-                    СОХРАНИТЬ ПРОМОКОД
+                    <span class="admin-icon-slot" data-admin-icon="check" aria-hidden="true"></span> СОХРАНИТЬ ПРОМОКОД
                 </button>
             </div>
 
             <div class="admin-card">
-                <div class="admin-card-title">⭐️ ОДОБРЕННЫЕ ПОЛЬЗОВАТЕЛИ</div>
+                <div class="admin-card-title"><span class="admin-icon-slot" data-admin-icon="crown" aria-hidden="true"></span> НАЗНАЧЕННЫЕ VIP</div>
                 <div class="promo-input-row" style="margin-bottom: 10px;">
                     <input type="text" id="admin-approved-input" placeholder="@username">
-                    <button class="apply-promo-btn" data-action="add-vip-user">
+                    <button class="apply-promo-btn" data-action="add-vip-user" aria-label="Назначить VIP по username">
                         <div class="hitbox-overlay"></div>
-                        +
+                        <span class="admin-icon-slot" data-admin-icon="plus" aria-hidden="true"></span>
                     </button>
                 </div>
 
@@ -525,9 +518,10 @@
             </div>
 
             <div class="admin-card">
-                <div class="admin-card-title">👥 ВСЕ ПОЛЬЗОВАТЕЛИ</div>
-                <div class="promo-input-row" style="margin-bottom: 10px;">
-                    <input type="search" id="admin-search-user" maxlength="128" aria-label="Поиск по имени, username или Telegram ID" placeholder="🔍 Поиск..." data-input-action="filter-users">
+                <div class="admin-card-title"><span class="admin-icon-slot" data-admin-icon="users" aria-hidden="true"></span> ВСЕ ПОЛЬЗОВАТЕЛИ</div>
+                <div class="promo-input-row admin-search-row" style="margin-bottom: 10px;">
+                    <span class="admin-icon-slot" data-admin-icon="search" aria-hidden="true"></span>
+                    <input type="search" id="admin-search-user" maxlength="128" aria-label="Поиск по имени, username или Telegram ID" placeholder="Поиск..." data-input-action="filter-users">
                 </div>
 
                 <div class="all-users-scroll-list" id="all-users-container"></div>
@@ -570,14 +564,44 @@
 
         <button class="nav-item admin-only-item hidden" id="btn-nav-4" data-action="switch-nav" data-index="4" data-screen="admin">
             <div class="hitbox-overlay"></div>
-            <span class="nav-icon">👑</span>
+            <span class="nav-icon admin-icon-slot" data-admin-icon="crown" aria-hidden="true"></span>
             <span class="nav-text">Админ</span>
         </button>
     </nav>
 
 </div>
 
+<button id="payment-open-button" class="payment-open-button" type="button" data-action="open-payment-sheet" hidden>Оплатить</button>
+<div class="payment-sheet-backdrop" id="payment-sheet-backdrop" data-action="close-payment-sheet" hidden>
+    <section class="payment-methods" id="payment-methods" role="dialog" aria-modal="true" aria-labelledby="payment-methods-title" tabindex="-1">
+        <div class="payment-sheet-swipe" id="payment-sheet-swipe">
+            <span class="payment-sheet-grip" aria-hidden="true"></span>
+            <button class="payment-sheet-close" id="payment-sheet-close" type="button" data-action="close-payment-sheet" aria-label="Закрыть окно оплаты">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+            </button>
+            <h3 id="payment-methods-title">Выберите способ оплаты</h3>
+        </div>
+        <p class="payment-tariff-title" id="payment-tariff-title"></p>
+        <p class="payment-sheet-cost"><span id="payment-cost-label">Стоимость:</span> <strong id="payment-cost">—</strong></p>
+        <p class="payment-snapshot-note" id="payment-snapshot-note" hidden>Для ранее созданного счёта действует сумма на кнопке выбранного способа оплаты.</p>
+        <div class="payment-method-buttons">
+            <button class="payment-method payment-method-rub" id="pay-yookassa" data-action="pay-yookassa" type="button">
+                <span>ЮKassa</span><strong id="yookassa-price">Сейчас недоступна</strong><small id="yookassa-saved-note" hidden>Ранее созданный счёт</small><small id="yookassa-expired-note" hidden>Создать новый счёт</small>
+            </button>
+            <button class="payment-method payment-method-stars" id="pay-stars" data-action="pay-stars" type="button">
+                <span>Telegram Stars</span><strong id="stars-price">Сейчас недоступны</strong><small id="stars-saved-note" hidden>Ранее созданный счёт</small><small id="stars-expired-note" hidden>Создать новый счёт</small>
+            </button>
+        </div>
+        <div class="payment-order-deadlines" id="sheet-payment-deadlines" aria-label="Срок оплаты созданных счетов" hidden></div>
+        <p class="payment-discount-pending" id="payment-discount-pending" hidden>Скидка закреплена за прежним счётом до проверки.</p>
+        <p class="checkout-status" id="checkout-status" role="status" aria-live="polite"></p>
+        <button class="checkout-check" id="checkout-open-bot" data-action="checkout-open-bot" type="button" hidden>Открыть бота</button>
+        <button class="checkout-check" id="checkout-open-link" data-action="checkout-open-link" type="button" hidden>Открыть страницу оплаты</button>
+        <button class="checkout-check" id="check-yookassa" data-action="check-yookassa" type="button" hidden>Проверить оплату</button>
+    </section>
+</div>
+
 <script src="config.js?v=1"></script>
-<script src="app.js?v=5006"></script>
+<script src="app.js?v=5007"></script>
 </body>
 </html>
