@@ -38,7 +38,7 @@ async function main() {
             return json(res,{order_id:'33333333-3333-4333-8333-333333333333',channel:'telegram_stars',status,amount:100,currency:'XTR'});
         }
         const file=name==='/'?'index.html':name.slice(1);
-        if (!['index.html','app.js','style.css','config.js'].includes(file)) return res.writeHead(404).end();
+        if (!['index.html','app.js','appearance.js','style.css','appearance.css','config.js'].includes(file)) return res.writeHead(404).end();
         res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');
         res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
     });
@@ -102,7 +102,7 @@ async function main() {
         await check('cancelled and failed payments reopen the same order',async()=>{
             const page=await newPage();
             await page.evaluate(()=>paySelectedTariff());await finish(page,'failed');
-            await page.evaluate(()=>paySelectedTariff());await finish(page,'cancelled');
+            await page.evaluate(()=>{selectTariff(1);return paySelectedTariff()});await finish(page,'cancelled');
             assert.equal(scenario.requests[0].key,scenario.requests[1].key);
             assert.equal(await page.evaluate(()=>isSubscribedUser),false);
             await page.context().close();

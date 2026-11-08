@@ -29,11 +29,14 @@ let yookassaCheckBusy = false;
 let lastYookassaCheck = 0;
 const paymentSheetState = { open: false, revision: 0, timer: null, initialized: false, previousFocus: null, backgroundInert: false, backgroundLocked: false };
 let checkoutBotLink = null;
+const checkoutBotLinks = new Map();
 let paymentOrderHistory = {};
 const paymentOrderChecks = new Map();
 let paymentRecoveryBatch = null;
 const paymentExpiryProbes = new Set();
 let paymentCountdownTimer = null;
+let paymentUiOrder = null;
+let paymentOperation = 0;
 let currentGameSession = "";
 let serverOnline = false;
 
@@ -59,6 +62,7 @@ let calcValues = { days: 7, discount: 30, limit: 13 };
 let touchStartXs = { days: 0, discount: 0, limit: 0 };
 
 let approvedUsers = [];
+const vipDirectory = { users: new Map(), loading: false, complete: false, revision: 0, controller: null };
 let allUsersList = [];
 const adminUsersState = {
     initialized: false, query: "", offset: 0, total: null, hasMore: false,
@@ -122,14 +126,26 @@ function applyBootstrap(data) {
 
     if (data.user) {
         userData = { ...data.user };
+        window.SolAppearance?.setUser(data.user.id ?? data.user.user_id);
         isAdmin = Boolean(data.is_admin ?? data.user.is_admin);
         const owner = String(data.user.id ?? data.user.user_id ?? "");
         if (owner !== paymentOwner) {
+            if (paymentOwner !== null) { closePaymentSheet(true); selectedMonths = null; }
             paymentOwner = owner;
+            paymentOperation++; paymentInProgress = false; yookassaCheckBusy = false; lastYookassaCheck = 0;
+            paymentUiOrder = null;
+            vipDirectory.controller?.abort(); vipDirectory.revision++; vipDirectory.users.clear(); vipDirectory.complete = false; vipDirectory.loading = false; vipDirectory.controller = null;
+            approvedUsers = []; allUsersList = []; adminVipValues.clear(); adminVipVersions.clear(); adminVipPending.clear();
+            adminUsersState.controller?.abort(); adminUsersState.revision++; adminUsersState.initialized = false; adminUsersState.loading = false;
+            clearTimeout(adminUsersState.timer); adminUsersState.legacyItems = null; adminUsersState.query = ""; adminUsersState.offset = 0; adminUsersState.total = null;
+            const adminSearch = document.getElementById("admin-search-user"); if (adminSearch) adminSearch.value = "";
+            document.getElementById("all-users-container")?.replaceChildren(); document.getElementById("approved-users-drum")?.replaceChildren();
+            if (!isAdmin && document.getElementById("screen-admin")?.classList.contains("active")) switchNav(0,"tunnel");
             paymentAttempts = {};
             yookassaAttempts = {};
             checkoutStatusText = "";
             checkoutBotLink = null;
+            checkoutBotLinks.clear();
             paymentOrderHistory = {};
             paymentExpiryProbes.clear();
             try {
@@ -197,6 +213,7 @@ function applyBootstrap(data) {
 
     if (data.admin && isAdmin) {
         approvedUsers = Array.isArray(data.admin.approved_users) ? data.admin.approved_users : [];
+        for (const user of approvedUsers) vipDirectory.users.set(Number(user.user_id), user);
         renderAllUsersList();
         renderApprovedUsersDrum();
     }
@@ -217,6 +234,7 @@ async function loadBootstrap(showErrors = true) {
         updateConnectButtonState();
         checkGameLockStatus();
         if (showErrors) showToast(`⚠️ Backend: ${error.message}`, "error");
+        if (!userData) window.SolAppearance?.setUser(null);
         console.error(error);
         return null;
     }
@@ -388,6 +406,7 @@ function initMap3D() {
 // 💧 3. КАПЛИ
 // ==========================================
 function triggerLiquidSplash() {
+    if (window.SolAppearance?.animationsAllowed() === false) return;
     const dropsBox = document.getElementById("liquid-drops-box");
     if (!dropsBox) return;
 
@@ -508,7 +527,7 @@ function playConnectAnimation() {
 
     connectionsGroup.innerHTML = `<path id="laser-path" class="laser-line" d="${pathD}" />`;
     const laserPath = document.getElementById("laser-path");
-    if (!laserPath || typeof anime !== "function") {
+    if (!laserPath || typeof anime !== "function" || window.SolAppearance?.animationsAllowed() === false) {
         finishConfigReady();
         return;
     }
@@ -1052,7 +1071,7 @@ function persistPaymentAttempts() {
 function paymentQuote(months) {
     const current = paymentCatalog.tariffs?.find(item => Number(item.months) === Number(months));
     const attempt = paymentAttempts[months];
-    return current && attempt ? { ...current, amount: attempt.amount, discount_percent: attempt.discountPercent ?? 0 } : current;
+    return current && attempt && !paymentOrderTerminal(attempt) && attempt.status !== "expired" ? { ...current, amount: attempt.amount, discount_percent: attempt.discountPercent ?? 0 } : current;
 }
 
 function newPaymentKey() {
@@ -1087,7 +1106,8 @@ function syncPaymentExpiry(attempt, result) {
     const server = Date.parse(result.server_time || "");
     if (Number.isFinite(expiry)) attempt.expiresAt = new Date(expiry).toISOString();
     if (Number.isFinite(server)) attempt.serverOffsetMs = server - Date.now();
-    attempt.status = ["paid", "refunded"].includes(result.payment_status) ? result.payment_status : result.status || attempt.status;
+    const nextStatus = ["paid", "refunded"].includes(result.payment_status) ? result.payment_status : result.status || attempt.status;
+    if (attempt.status !== "refunded" && !(attempt.status === "paid" && nextStatus !== "refunded")) attempt.status = nextStatus;
     if (result.created_at) attempt.createdAt = result.created_at;
     if (attempt.status !== "expired" && paymentSecondsLeft(attempt) > 0) {
         for (const provider of ["telegram_stars", "yookassa"]) paymentExpiryProbes.delete(paymentOrderKey(provider, attempt.orderId));
@@ -1105,8 +1125,50 @@ function rememberPaymentOrder(attempt, provider, archived = false) {
     paymentOrderHistory[id] = { provider, orderId: attempt.orderId, months: attempt.months,
         amount: attempt.amount, amountKopecks: attempt.amountKopecks, expiresAt: attempt.expiresAt,
         serverOffsetMs: attempt.serverOffsetMs, status: attempt.status, createdAt: attempt.createdAt,
-        archived: archived || previous?.archived || false };
+        archived: archived || previous?.archived || false,
+        uiHidden: attempt.uiHidden ?? previous?.uiHidden ?? archived,
+        notices: { ...previous?.notices, ...attempt.notices } };
     persistPaymentHistory();
+}
+function clearPaymentSelection() {
+    selectedMonths = null; checkoutStatusText = ""; checkoutBotLink = null; paymentUiOrder = null;
+    tg?.MainButton?.hideProgress?.();
+    updateTariffPricesUI(); renderPaymentMethods();
+}
+function activatePaymentUi(attempt, provider) {
+    attempt.uiHidden = false;
+    paymentUiOrder = { provider, key: attempt.key, orderId: attempt.orderId, months: attempt.months };
+    const record = paymentOrderHistory[paymentOrderKey(provider,attempt.orderId)];
+    if (record) { record.uiHidden = false; record.archived = false; }
+}
+function resolvePaymentUi(attempt, provider, { notify = true, cancelled = false, releaseBusy = false } = {}) {
+    const reason = cancelled ? "cancelled" : attempt.status;
+    if (!["paid","expired","refunded","canceled","error","cancelled"].includes(reason)) return false;
+    const id = paymentOrderKey(provider,attempt.orderId), old = paymentOrderHistory[id];
+    const alreadyHidden = Boolean(attempt.uiHidden || old?.uiHidden);
+    const current = paymentProviderAttempts(provider)[attempt.months];
+    const ownsUi = paymentUiOrder ? paymentUiOrder.provider === provider &&
+        (paymentUiOrder.orderId === attempt.orderId || paymentUiOrder.key === attempt.key)
+        : current?.orderId === attempt.orderId && !alreadyHidden;
+    attempt.uiHidden = true;
+    attempt.notices = { ...old?.notices, ...attempt.notices };
+    if (!attempt.notices[reason]) {
+        attempt.notices[reason] = true;
+        if (notify && (reason === "paid" || !alreadyHidden)) {
+            if (reason === "paid") showToast("Оплата подтверждена сервером. Подписка обновлена.");
+            if (reason === "expired") showToast("Время оплаты истекло");
+            if (reason === "cancelled") showToast("Оплата отменена");
+            if (reason === "refunded") showToast("Возврат подтверждён. По подписке обратитесь в /paysupport.");
+        }
+    }
+    rememberPaymentOrder(attempt,provider);
+    if (paymentOrderTerminal(attempt) && current?.orderId === attempt.orderId) delete paymentProviderAttempts(provider)[attempt.months];
+    if (ownsUi && selectedMonths === attempt.months) {
+        if (releaseBusy) { paymentInProgress = false; yookassaCheckBusy = false; paymentOperation++; }
+        closePaymentSheet(true); clearPaymentSelection();
+    }
+    persistPaymentAttempts(); persistYookassaAttempts();
+    return true;
 }
 function restorePaymentOrders(payment) {
     const seen = new Set();
@@ -1117,10 +1179,19 @@ function restorePaymentOrders(payment) {
             || ![1, 3, 6, 12].includes(Number(order.months))) continue;
         const provider = order.provider, months = Number(order.months), map = paymentProviderAttempts(provider);
         const previous = map[months];
-        const attempt = { months, key: order.request_id, orderId: order.order_id, status: order.status,
+        const knownStatus = paymentOrderHistory[paymentOrderKey(provider,order.order_id)]?.status;
+        const attempt = { months, key: order.request_id, orderId: order.order_id, status: ["paid","refunded"].includes(knownStatus) ? knownStatus : order.status,
             discountPercent: order.discount_percent, ...(provider === "yookassa" ? { amountKopecks: order.amount_kopecks } : { amount: order.amount }),
             deliveryState: order.checkout_delivery?.state || (previous?.orderId === order.order_id ? previous.deliveryState : undefined) };
         syncPaymentExpiry(attempt, { ...order, server_time: order.server_time || payment.server_time });
+        if (provider === "yookassa" && safeCheckoutBotLink(order.checkout_delivery?.bot_url)) checkoutBotLinks.set(order.order_id,order.checkout_delivery.bot_url);
+        if (attempt.status === "expired" || paymentOrderTerminal(attempt)) {
+            const visibleBefore = Boolean(document.querySelector(`[data-payment-order="${paymentOrderKey(provider,order.order_id)}"]:not(.is-leaving)`));
+            rememberPaymentOrder(attempt,provider,true);
+            resolvePaymentUi(attempt,provider,{notify:visibleBefore,releaseBusy:visibleBefore});
+            if (previous?.orderId === attempt.orderId) Object.assign(previous,attempt);
+            continue;
+        }
         const id = paymentOrderKey(provider, order.order_id), group = `${provider}:${months}`;
         const archived = paymentOrderHistory[id]?.archived;
         if (seen.has(group) || (archived && attempt.status === "expired")
@@ -1132,7 +1203,6 @@ function restorePaymentOrders(payment) {
         if (previous?.orderId && previous.orderId !== attempt.orderId) rememberPaymentOrder(previous, provider, true);
         map[months] = { ...(previous?.orderId === attempt.orderId ? previous : {}), ...attempt };
         seen.add(group);
-        if (!selectedMonths) selectedMonths = months;
         if (provider === "yookassa" && selectedMonths === months && safeCheckoutBotLink(order.checkout_delivery?.bot_url)) {
             checkoutBotLink = { orderId: order.order_id, url: order.checkout_delivery.bot_url };
         }
@@ -1142,18 +1212,27 @@ function restorePaymentOrders(payment) {
 function trackedPaymentOrders() {
     const records = new Map(Object.entries(paymentOrderHistory));
     for (const provider of ["telegram_stars", "yookassa"]) for (const attempt of Object.values(paymentProviderAttempts(provider))) {
-        if (attempt.orderId) records.set(paymentOrderKey(provider, attempt.orderId), { ...attempt, provider });
+        if (attempt.orderId) { const id = paymentOrderKey(provider,attempt.orderId); records.set(id, { ...records.get(id), ...attempt, provider }); }
     }
     return [...records.values()].filter(record => checkoutUuid.test(record.orderId) && Number.isFinite(Date.parse(record.expiresAt || "")) && !paymentOrderTerminal(record))
         .sort((a, b) => Number(paymentOrderExpired(a)) - Number(paymentOrderExpired(b)) || (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
 }
 function renderPaymentCountdowns() {
-    const orders = trackedPaymentOrders();
+    const tracked = trackedPaymentOrders();
+    const orders = tracked.filter(order => !order.uiHidden && !order.archived && order.status !== "expired");
     const render = (container, rows, controls) => {
         if (!container) return;
-        container.hidden = rows.length === 0;
+        if (rows.length) container.hidden = false;
         const ids = new Set(rows.map(row => paymentOrderKey(row.provider, row.orderId)));
-        for (const node of [...container.children]) if (!ids.has(node.dataset.paymentOrder)) node.remove();
+        for (const node of [...container.children]) if (!ids.has(node.dataset.paymentOrder) && !node.classList.contains("is-leaving")) {
+            const finish = () => { node.remove(); if (!container.children.length) container.hidden = true; };
+            node.classList.add("is-leaving");
+            if (!paymentSheetReducedMotion() && typeof node.animate === "function") {
+                const animation = node.animate([{opacity:1,transform:"translateY(0)"},{opacity:0,transform:"translateY(-5px)"}],{duration:180,easing:"ease-out"});
+                animation.finished.then(finish,finish);
+            } else finish();
+        }
+        if (!rows.length && !container.children.length) container.hidden = true;
         for (const order of rows) {
             const id = paymentOrderKey(order.provider, order.orderId);
             let row = [...container.children].find(node => node.dataset.paymentOrder === id);
@@ -1171,14 +1250,14 @@ function renderPaymentCountdowns() {
             row.classList.toggle("payment-deadline-warning", !expired && seconds !== null && seconds <= 60);
             row.classList.toggle("payment-deadline-expired", expired);
             row.querySelector(".payment-deadline-label").textContent = `${order.provider === "yookassa" ? "ЮKassa" : "Telegram Stars"} · ${order.months} мес.`;
-            row.querySelector(".payment-deadline-value").textContent = expired ? "Время оплаты истекло" : `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+            row.querySelector(".payment-deadline-value").textContent = seconds === 0 ? "00:00 · Проверяем оплату" : `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
             const button = row.querySelector("button"); if (button) button.disabled = paymentOrderChecks.has(id);
         }
     };
     render(document.getElementById("profile-payment-deadlines"), orders, true);
     render(document.getElementById("sheet-payment-deadlines"), orders.filter(row => row.months === selectedMonths), false);
     for (const [provider, noteId] of [["telegram_stars", "stars-expired-note"], ["yookassa", "yookassa-expired-note"]]) {
-        const note = document.getElementById(noteId); if (note) note.hidden = !paymentOrderExpired(paymentProviderAttempts(provider)[selectedMonths]);
+        const note = document.getElementById(noteId); if (note) note.hidden = true;
     }
     const held = document.getElementById("payment-discount-pending");
     if (held) held.hidden = Number(tariffCatalog[selectedMonths]?.discount_percent || 0) > 0
@@ -1186,7 +1265,7 @@ function renderPaymentCountdowns() {
     if (orders.some(order => paymentSecondsLeft(order) > 0) && !paymentCountdownTimer) {
         paymentCountdownTimer = setInterval(renderPaymentCountdowns, 1000);
     } else if (!orders.some(order => paymentSecondsLeft(order) > 0) && paymentCountdownTimer) { clearInterval(paymentCountdownTimer); paymentCountdownTimer = null; }
-    for (const order of orders) if (paymentOrderExpired(order) && order.status !== "expired") {
+    for (const order of tracked) if (paymentOrderExpired(order) && order.status !== "expired") {
         const id = paymentOrderKey(order.provider, order.orderId);
         if (!paymentExpiryProbes.has(id)) { paymentExpiryProbes.add(id); void checkPaymentOrder(order.provider, order.orderId, true); }
     }
@@ -1209,10 +1288,8 @@ async function checkPaymentOrder(provider, orderId, quiet = false) {
             syncPaymentExpiry(attempt, result);
             if (provider === "yookassa" && current) syncCheckoutDelivery(attempt, result);
             rememberPaymentOrder(attempt, provider, !current);
-            if (paymentOrderTerminal(attempt)) {
-                if (paymentProviderAttempts(provider)[attempt.months]?.orderId === orderId) delete paymentProviderAttempts(provider)[attempt.months];
-                if (attempt.status === "paid") { await loadBootstrap(false); if (!quiet) showToast("Оплата подтверждена сервером"); }
-            }
+            resolvePaymentUi(attempt,provider,{releaseBusy:true});
+            if (attempt.status === "paid") await loadBootstrap(false);
             persistPaymentAttempts(); persistYookassaAttempts();
             return result;
         } catch (_) { if (!quiet) showToast("Не удалось проверить оплату. Повторите позже или напишите в /paysupport", "error"); return null; }
@@ -1223,6 +1300,7 @@ async function checkPaymentOrder(provider, orderId, quiet = false) {
 async function preparePaymentAttempt(provider, months) {
     const map = paymentProviderAttempts(provider), attempt = map[months];
     if (!attempt?.orderId || !paymentOrderExpired(attempt)) return true;
+    const displayed = provider === "yookassa" ? yookassaQuote(months)?.amount_kopecks : paymentQuote(months)?.amount;
     const result = await checkPaymentOrder(provider, attempt.orderId, true);
     if (!result) { setCheckoutStatus(months, "Сначала проверьте прежний счёт. Новый счёт не создан."); return false; }
     if (["paid", "refunded"].includes(result.status) || ["paid", "refunded"].includes(result.payment_status)) return false;
@@ -1233,7 +1311,8 @@ async function preparePaymentAttempt(provider, months) {
     await loadBootstrap(false);
     const quote = provider === "yookassa" ? yookassaQuote(months) : paymentQuote(months);
     const currentAmount = provider === "yookassa" ? quote?.amount_kopecks : quote?.amount;
-    if (currentAmount !== (provider === "yookassa" ? attempt.amountKopecks : attempt.amount)) {
+    if (selectedMonths !== months) return false;
+    if (currentAmount !== displayed) {
         setCheckoutStatus(months, "Прежний счёт истёк. Проверьте актуальную цену и нажмите способ оплаты для нового счёта.");
         return false;
     }
@@ -1262,7 +1341,7 @@ async function checkPendingPaymentOrders() {
 function yookassaQuote(months) {
     const current = yookassaCatalog.tariffs?.find(item => Number(item.months) === Number(months));
     const attempt = yookassaAttempts[months];
-    return current && attempt ? { ...current, amount_kopecks: attempt.amountKopecks, discount_percent: attempt.discountPercent } : current;
+    return current && attempt && !paymentOrderTerminal(attempt) && attempt.status !== "expired" ? { ...current, amount_kopecks: attempt.amountKopecks, discount_percent: attempt.discountPercent } : current;
 }
 
 function rublePrice(kopecks) {
@@ -1283,7 +1362,7 @@ function setCheckoutStatus(months, text) {
 }
 
 function paymentSheetReducedMotion() {
-    return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+    return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) || window.SolAppearance?.animationsAllowed() === false;
 }
 
 function updatePaymentCta() {
@@ -1291,7 +1370,7 @@ function updatePaymentCta() {
     const active = selected && !paymentInProgress && !yookassaCheckBusy;
     if (tg?.MainButton) {
         tg.MainButton.setText("Оплатить");
-        tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: active, is_visible: selected && !paymentSheetState.open });
+        tg.MainButton.setParams?.({ ...(window.SolAppearance?.chrome() || {color:"#6435a6",text_color:"#ffffff"}), is_active: active, is_visible: selected && !paymentSheetState.open });
         if (active) tg.MainButton.enable?.(); else tg.MainButton.disable?.();
         if (selected && !paymentSheetState.open) tg.MainButton.show(); else tg.MainButton.hide();
     }
@@ -1326,8 +1405,15 @@ function openPaymentSheet() {
     updatePaymentCta();
 }
 
-function closePaymentSheet() {
+function closePaymentSheet(preserveSelection = false) {
     if (!paymentSheetState.open) return;
+    if (preserveSelection !== true) {
+        for (const provider of ["telegram_stars","yookassa"]) {
+            const attempt = paymentProviderAttempts(provider)[selectedMonths];
+            if (attempt) { attempt.uiHidden = true; rememberPaymentOrder(attempt,provider); }
+        }
+        clearPaymentSelection();
+    }
     const backdrop = document.getElementById("payment-sheet-backdrop");
     const panel = document.getElementById("payment-methods");
     paymentSheetState.open = false;
@@ -1352,7 +1438,7 @@ function closePaymentSheet() {
 function initPaymentSheet() {
     if (paymentSheetState.initialized) return;
     paymentSheetState.initialized = true;
-    tg?.BackButton?.onClick?.(closePaymentSheet);
+    tg?.BackButton?.onClick?.(() => closePaymentSheet());
     document.addEventListener("keydown", event => {
         if (!paymentSheetState.open) return;
         if (event.key === "Escape") { event.preventDefault(); closePaymentSheet(); return; }
@@ -1400,7 +1486,7 @@ function syncCheckoutDelivery(attempt, result, missingState = null) {
     const delivery = result.checkout_delivery || {};
     if (["sent", "failed", "unknown", "pending", "unavailable"].includes(delivery.state)) attempt.deliveryState = delivery.state;
     else if (missingState) attempt.deliveryState = missingState;
-    if (safeCheckoutBotLink(delivery.bot_url)) checkoutBotLink = { orderId: result.order_id, url: delivery.bot_url };
+    if (safeCheckoutBotLink(delivery.bot_url)) { checkoutBotLinks.set(result.order_id,delivery.bot_url); checkoutBotLink = { orderId: result.order_id, url: delivery.bot_url }; }
 }
 
 function renderPaymentMethods() {
@@ -1409,7 +1495,8 @@ function renderPaymentMethods() {
     const rub = yookassaQuote(selectedMonths);
     const stars = paymentQuote(selectedMonths);
     const attempt = yookassaAttempts[selectedMonths];
-    const pending = Boolean(attempt?.orderId && !["paid", "refunded", "canceled", "error"].includes(attempt.status));
+    if (attempt?.orderId && checkoutBotLinks.has(attempt.orderId)) checkoutBotLink = { orderId:attempt.orderId,url:checkoutBotLinks.get(attempt.orderId) };
+    const pending = Boolean(attempt?.orderId && !attempt.uiHidden && attempt.status !== "expired" && !paymentOrderTerminal(attempt));
     const rubAvailable = Boolean(yookassaCatalog.enabled && Number.isSafeInteger(rub?.amount_kopecks) && rub.amount_kopecks > 0 && rub.quote_token);
     const starsAvailable = Boolean(paymentCatalog.enabled && Number.isSafeInteger(stars?.amount) && stars.amount > 0);
     const currentRub = yookassaCatalog.tariffs?.find(item => Number(item.months) === Number(selectedMonths));
@@ -1448,62 +1535,39 @@ function renderPaymentMethods() {
 }
 
 async function payWithYookassa() {
-    if (!selectedMonths || paymentInProgress || yookassaCheckBusy) return;
-    const months = selectedMonths;
+    if (!selectedMonths || paymentInProgress) return;
+    const months = selectedMonths, owner = paymentOwner, operation = ++paymentOperation;
     let quote = yookassaQuote(months);
-    if (!yookassaCatalog.enabled || !Number.isSafeInteger(quote?.amount_kopecks) || !quote?.quote_token) {
-        showToast("ЮKassa сейчас недоступна", "error");
-        return;
-    }
-    paymentInProgress = true;
-    setCheckoutStatus(months, "Подготавливаю счёт ЮKassa…");
-    tg?.MainButton?.disable?.();
-    renderPaymentMethods();
+    if (!yookassaCatalog.enabled || !Number.isSafeInteger(quote?.amount_kopecks) || !quote?.quote_token) return showToast("ЮKassa сейчас недоступна", "error");
+    paymentInProgress = true; setCheckoutStatus(months, "Подготавливаю счёт ЮKassa…"); renderPaymentMethods();
     try {
         if (!await preparePaymentAttempt("yookassa", months)) return;
+        if (owner !== paymentOwner || selectedMonths !== months) return;
         quote = yookassaQuote(months);
-        if (!yookassaCatalog.enabled || !quote?.quote_token) { setCheckoutStatus(months, "ЮKassa сейчас недоступна"); return; }
+        if (!yookassaCatalog.enabled || !quote?.quote_token) return;
         let attempt = yookassaAttempts[months];
-        if (!attempt || ["paid", "refunded", "canceled", "error"].includes(attempt.status)) {
-            attempt = { months, amountKopecks: quote.amount_kopecks, discountPercent: Number(quote.discount_percent || 0),
-                key: newPaymentKey(), orderId: null, status: "pending" };
-            yookassaAttempts[months] = attempt;
-            persistYookassaAttempts();
+        if (!attempt || paymentOrderTerminal(attempt)) {
+            attempt = { months, amountKopecks: quote.amount_kopecks, discountPercent: Number(quote.discount_percent || 0), key: newPaymentKey(), orderId: null, status: "pending" };
+            yookassaAttempts[months] = attempt; persistYookassaAttempts();
         }
-        const result = await apiFetch("/api/payments/yookassa/order", { method: "POST",
-            headers: { "Idempotency-Key": attempt.key },
+        activatePaymentUi(attempt, "yookassa");
+        const result = await apiFetch("/api/payments/yookassa/order", { method: "POST", headers: { "Idempotency-Key": attempt.key },
             body: JSON.stringify({ months, expected_currency: "RUB", expected_amount: attempt.amountKopecks, quote_token: quote.quote_token }) });
-        if (result.provider !== "yookassa" || result.currency !== "RUB" || result.amount_kopecks !== attempt.amountKopecks
-            || !checkoutUuid.test(result.order_id)) throw new Error("Счёт не совпал с выбранной ценой. Обновите тарифы");
+        if (owner !== paymentOwner) return;
+        if (result.provider !== "yookassa" || result.currency !== "RUB" || result.amount_kopecks !== attempt.amountKopecks || !checkoutUuid.test(result.order_id)) throw new Error("Счёт не совпал с выбранной ценой");
         attempt.orderId = result.order_id;
-        attempt.status = result.status;
-        syncPaymentExpiry(attempt, result);
-        rememberPaymentOrder(attempt, "yookassa");
-        syncCheckoutDelivery(attempt, result, "unavailable");
-        persistYookassaAttempts();
-        if (result.status === "expired") {
-            setCheckoutStatus(months, "Время оплаты истекло");
-        } else if (["paid", "refunded", "canceled", "error"].includes(result.status)) {
-            await reconcileYookassaResult(months, result);
-        } else if (["pending", "confirming"].includes(result.status) && safeCheckoutLink(result.confirmation_url)) {
-            setCheckoutStatus(months, attempt.deliveryState === "sent"
-                ? "Бот отправил кнопку «Перейти к оплате». После оплаты проверьте подтверждение."
-                : "Доставка сообщения бота не подтверждена. Можно открыть страницу уже созданного заказа ниже.");
-        } else if (result.status === "review") {
-            setCheckoutStatus(months, "Платёж требует проверки. Напишите в /paysupport.");
-        } else {
-            setCheckoutStatus(months, "Ссылка оплаты ещё не подтверждена. Проверьте статус или напишите в /paysupport.");
-        }
+        if (paymentUiOrder?.key === attempt.key) paymentUiOrder.orderId = result.order_id;
+        syncPaymentExpiry(attempt, result); rememberPaymentOrder(attempt, "yookassa"); syncCheckoutDelivery(attempt, result, "unavailable"); persistYookassaAttempts();
+        if (resolvePaymentUi(attempt, "yookassa")) { if (attempt.status === "paid") await loadBootstrap(false); }
+        else if (!attempt.uiHidden) setCheckoutStatus(months, result.status === "review" ? "Платёж требует проверки. Напишите в /paysupport." : attempt.deliveryState === "sent"
+            ? "Бот отправил кнопку «Перейти к оплате». После оплаты проверьте подтверждение." : "Доставка сообщения бота не подтверждена. Можно открыть страницу уже созданного заказа ниже.");
     } catch (error) {
-        if (error.status === 409 && /Стоимость|Повторный запрос/.test(error.message)) {
-            delete yookassaAttempts[months]; persistYookassaAttempts();
-        }
-        setCheckoutStatus(months, "Не удалось подтвердить создание счёта. Повторите тот же запрос или проверьте оплату.");
-        await loadBootstrap(false);
-        showToast(`Оплата: ${error.message}`, "error");
+        if (owner !== paymentOwner) return;
+        if (error.status === 409 && !yookassaAttempts[months]?.orderId && /Стоимость|Повторный запрос/.test(error.message)) { delete yookassaAttempts[months]; persistYookassaAttempts(); }
+        setCheckoutStatus(months, "Не удалось подтвердить создание счёта. Проверьте оплату или повторите тот же запрос.");
+        await loadBootstrap(false); showToast(`Оплата: ${error.message}`, "error");
     } finally {
-        paymentInProgress = false;
-        selectTariff(selectedMonths);
+        if (owner === paymentOwner && operation === paymentOperation) { paymentInProgress = false; renderPaymentMethods(); }
     }
 }
 
@@ -1511,18 +1575,20 @@ async function openExistingCheckout() {
     const months = selectedMonths;
     const attempt = yookassaAttempts[months];
     if (!attempt?.orderId || paymentInProgress || yookassaCheckBusy || typeof tg?.openLink !== "function") return;
+    const owner = paymentOwner, operation = ++paymentOperation;
     const sheetRevision = paymentSheetState.open ? paymentSheetState.revision : null;
     paymentInProgress = true;
     renderPaymentMethods();
     try {
         const result = await apiFetch(`/api/payments/orders/${encodeURIComponent(attempt.orderId)}`);
+        if (owner !== paymentOwner) return;
         await reconcileYookassaResult(months, result);
         if (sheetRevision !== null && (!paymentSheetState.open || paymentSheetState.revision !== sheetRevision)) return;
         if (["pending", "confirming"].includes(result.status) && safeCheckoutLink(result.confirmation_url)) tg.openLink(result.confirmation_url);
         else if (["pending", "confirming"].includes(result.status)) setCheckoutStatus(months, "Ссылка ещё проверяется. Повторите проверку позже.");
     } catch (_) {
         setCheckoutStatus(months, "Не удалось проверить страницу оплаты. Повторите позже или напишите в /paysupport.");
-    } finally { paymentInProgress = false; renderPaymentMethods(); }
+    } finally { if (owner === paymentOwner && operation === paymentOperation) { paymentInProgress = false; renderPaymentMethods(); } }
 }
 
 function openCheckoutBot() {
@@ -1534,30 +1600,12 @@ function openCheckoutBot() {
 
 async function reconcileYookassaResult(months, result) {
     const attempt = yookassaAttempts[months];
-    if (!attempt || result.provider !== "yookassa" || result.currency !== "RUB" || result.amount_kopecks !== attempt.amountKopecks
-        || result.order_id !== attempt.orderId) throw new Error("Статус платежа требует сверки");
-    attempt.status = result.status;
-    syncPaymentExpiry(attempt, result);
-    rememberPaymentOrder(attempt, "yookassa");
-    syncCheckoutDelivery(attempt, result);
-    if (result.status === "paid") {
-        delete yookassaAttempts[months];
-        setCheckoutStatus(months, "Оплата подтверждена сервером. Подписка обновлена.");
-        persistYookassaAttempts();
-        await loadBootstrap(false);
-    } else if (["canceled", "error", "refunded"].includes(result.status)) {
-        delete yookassaAttempts[months];
-        setCheckoutStatus(months, result.status === "refunded" ? "Возврат подтверждён. По подписке обратитесь в /paysupport."
-            : "Оплата не завершена. Можно выбрать способ оплаты снова.");
-        persistYookassaAttempts();
-        await loadBootstrap(false);
-    } else if (result.status === "expired") {
-        setCheckoutStatus(months, "Время оплаты истекло"); persistYookassaAttempts();
-    } else {
-        setCheckoutStatus(months, result.status === "review" ? "Платёж требует проверки в /paysupport." : "Ожидание подтверждения оплаты.");
-        persistYookassaAttempts();
-    }
-    renderPaymentMethods();
+    if (!attempt || result.provider !== "yookassa" || result.currency !== "RUB" || result.amount_kopecks !== attempt.amountKopecks || result.order_id !== attempt.orderId)
+        throw new Error("Статус платежа требует сверки");
+    syncPaymentExpiry(attempt, result); rememberPaymentOrder(attempt, "yookassa"); syncCheckoutDelivery(attempt, result);
+    if (resolvePaymentUi(attempt, "yookassa")) { if (attempt.status === "paid") await loadBootstrap(false); }
+    else setCheckoutStatus(months, result.status === "review" ? "Платёж требует проверки в /paysupport." : "Ожидание подтверждения оплаты.");
+    persistYookassaAttempts(); renderPaymentMethods();
 }
 
 async function checkYookassaPayment(quiet = false) {
@@ -1862,17 +1910,71 @@ function renderApprovedUsersDrum() {
     const drum = document.getElementById("approved-users-drum");
     if (!drum) return;
     const scrollTop = drum.parentElement.scrollTop;
-    if (!approvedUsers.length) {
-        drum.innerHTML = `<div class="empty-list-msg">Список одобренных пользователей пуст</div>`;
+    const merged = new Map();
+    const candidates = vipDirectory.complete ? [...vipDirectory.users.values()] : [...allUsersList,...approvedUsers,...vipDirectory.users.values()];
+    for (const user of candidates) {
+        const id = Number(user.user_id), latest = { ...user, ...adminVipValues.get(id) };
+        if (Number.isSafeInteger(id)) merged.set(id,latest);
+    }
+    const active = [...merged.values()].filter(user => user.isVip);
+    if (!active.length) {
+        drum.innerHTML = `<div class="empty-list-msg">${vipDirectory.loading ? "Загружаем VIP…" : "Действующих VIP пока нет"}</div>`;
         return;
     }
-    drum.innerHTML = approvedUsers.map(user => `
+    drum.innerHTML = active.map(user => `
         <div class="drum-item">
-            <span>${escapeHtml(user.username || user.name || String(user.user_id))}</span>
-            <button class="remove-user-btn" type="button" data-action="remove-vip-user" data-user-id="${Number(user.user_id)}" aria-label="Снять назначенный VIP у пользователя ${Number(user.user_id)}" ${adminVipPending.has(Number(user.user_id)) || !adminVipSupported(user) || !user.vip_admin_granted ? 'disabled title="Для безопасного снятия VIP требуется обновление backend"' : ""}>${adminIcon("close")}</button>
+            <span>${escapeHtml(user.username || user.name || String(user.user_id))}<small>${user.vip_admin_granted ? "Назначен администратором" : "Действующее защищённое VIP-право"}</small></span>
+            <button class="remove-user-btn" type="button" data-action="remove-vip-user" data-user-id="${Number(user.user_id)}" aria-label="Снять назначенный VIP у пользователя ${Number(user.user_id)}" ${adminVipPending.has(Number(user.user_id)) || !adminVipSupported(user) || !user.vip_admin_granted ? 'disabled title="Защищённое VIP-право нельзя снять этой кнопкой"' : ""}>${adminIcon("close")}</button>
         </div>
     `).join("");
     drum.parentElement.scrollTop = scrollTop;
+}
+
+async function loadVipDirectory(force = false) {
+    if (!isAdmin || (vipDirectory.loading && !force)) return;
+    vipDirectory.controller?.abort();
+    const controller = new AbortController(), revision = ++vipDirectory.revision, owner = paymentOwner;
+    vipDirectory.controller = controller; vipDirectory.loading = true; vipDirectory.complete = false;
+    const status = document.getElementById("admin-vip-list-status"), found = new Map();
+    const versions = new Map(adminVipVersions);
+    if (status) status.textContent = "Загружаем всех действующих VIP…";
+    let offset = 0;
+    try {
+        for (;;) {
+            const page = await apiFetch(`/api/admin/users?limit=100&offset=${offset}&q=`, {signal:controller.signal});
+            if (!isAdmin || paymentOwner !== owner || revision !== vipDirectory.revision) return;
+            if (!Array.isArray(page.users)) throw new Error("Не удалось получить полный список VIP.");
+            for (const user of page.users) {
+                const id = Number(user.user_id);
+                const changed = adminVipPending.has(id) || (adminVipVersions.get(id)||0) !== (versions.get(id)||0);
+                const current = changed ? {...user,...adminVipValues.get(id)} : user;
+                if (adminVipSupported(current)) {
+                    adminVipValues.set(id,Object.fromEntries(["isVip","hasSub","vip_admin_granted","vip_protected"].map(key=>[key,current[key]])));
+                    allUsersList = allUsersList.map(row=>Number(row.user_id)===id?{...row,...current}:row);
+                    updateAdminVipCard(id);
+                }
+                if (Number.isSafeInteger(id) && id>0 && current.isVip) found.set(id,current);
+            }
+            const pagination = page.pagination;
+            if (!pagination || !pagination.has_more) {
+                vipDirectory.complete = Boolean(pagination) || (typeof page.has_more === "boolean" && !page.has_more);
+                break;
+            }
+            const next = Number(pagination.next_offset);
+            if (!Number.isSafeInteger(next) || next <= offset || !page.users.length) throw new Error("Постраничная загрузка VIP требует повторной проверки.");
+            offset = next;
+        }
+        for (const [id,value] of adminVipValues) if (adminVipPending.has(id) || (adminVipVersions.get(id)||0)!==(versions.get(id)||0)) {
+            const current = {...found.get(id),...vipDirectory.users.get(id),...allUsersList.find(row=>Number(row.user_id)===id),...value,user_id:id};
+            if (current.isVip) found.set(id,current); else found.delete(id);
+        }
+        vipDirectory.users = found;
+        if(status) status.textContent = vipDirectory.complete ? `Действующих VIP: ${found.size}` : "Полнота VIP-списка не подтверждена старым API.";
+    } catch(error) {
+        if(error.name!=="AbortError" && revision===vipDirectory.revision && status) status.textContent = `${error.message} Нажмите «Обновить VIP-список».`;
+    } finally {
+        if(revision===vipDirectory.revision) { vipDirectory.loading=false; renderApprovedUsersDrum(); }
+    }
 }
 
 async function addApprovedUser() {
@@ -1897,7 +1999,7 @@ async function addApprovedUser() {
 async function removeApprovedUser(userId) {
     userId = Number(userId);
     if (!isAdmin || adminVipPending.has(userId)) return;
-    const assigned = approvedUsers.find(user => Number(user.user_id) === userId);
+    const assigned = approvedUsers.find(user => Number(user.user_id) === userId) || vipDirectory.users.get(userId);
     if (!adminVipSupported(assigned) || !assigned.vip_admin_granted) return adminActionStatus("Для безопасного снятия назначенного VIP требуется обновление backend.");
     adminVipPending.add(userId);
     adminVipVersions.set(userId, (adminVipVersions.get(userId) || 0) + 1);
@@ -1938,9 +2040,9 @@ function updateAdminVipCard(userId) {
     button.disabled = pending || !adminVipSupported(user);
     if (adminVipSupported(user)) button.removeAttribute("title");
     button.setAttribute("aria-busy", String(pending));
-    button.setAttribute("aria-pressed", String(Boolean(user.vip_admin_granted)));
+    button.setAttribute("aria-pressed", String(Boolean(user.isVip)));
     button.setAttribute("aria-label", `${user.vip_admin_granted ? "Снять назначенный" : "Назначить"} VIP пользователю ${userId}`);
-    button.classList.toggle("admin-vip-active", Boolean(user.vip_admin_granted));
+    button.classList.toggle("admin-vip-active", Boolean(user.isVip));
     const summary = card.querySelector('[data-admin-vip-summary]');
     if (summary) summary.textContent = `VIP: ${adminVipSummary(user)}`;
     const note = card.querySelector('.admin-vip-source-note');
@@ -1959,6 +2061,7 @@ function applyAdminVipResult(result) {
     const target = result.target_user;
     if (target && Number.isSafeInteger(Number(target.user_id)) && adminVipSupported(target)) {
         const id = Number(target.user_id);
+        if (target.isVip) vipDirectory.users.set(id,target); else vipDirectory.users.delete(id);
         adminVipVersions.set(id, (adminVipVersions.get(id) || 0) + 1);
         adminVipValues.set(id, Object.fromEntries(["isVip", "hasSub", "vip_admin_granted", "vip_protected"].map(key => [key, target[key]])));
         allUsersList = allUsersList.map(user => Number(user.user_id) === id ? { ...user, ...target } : user);
@@ -2106,7 +2209,7 @@ function renderAllUsersList() {
                 <div class="user-profile-actions">
                     <button type="button" class="user-profile-btn" data-action="open-admin-profile" data-user-id="${Number(u.user_id)}">${adminIcon("profile")}<span>Открыть профиль</span></button>
                     <button type="button" class="user-profile-btn" data-action="contact-admin-user" data-user-id="${Number(u.user_id)}" aria-expanded="false">${adminIcon("message")}<span>Связаться через бота</span></button>
-                    <button type="button" class="admin-vip-toggle ${u.vip_admin_granted ? "admin-vip-active" : ""}" data-action="toggle-admin-vip" data-user-id="${Number(u.user_id)}" aria-pressed="${Boolean(u.vip_admin_granted)}" aria-busy="${adminVipPending.has(Number(u.user_id))}" aria-label="${u.vip_admin_granted ? "Снять назначенный" : "Назначить"} VIP пользователю ${Number(u.user_id)}" aria-describedby="admin-vip-note-${Number(u.user_id)}" ${adminVipPending.has(Number(u.user_id)) || !adminVipSupported(u) ? "disabled" : ""} ${!adminVipSupported(u) ? 'title="Обновите backend для управления VIP по ID"' : ""}>${adminIcon("crown")}<span>VIP</span></button>
+                    <button type="button" class="admin-vip-toggle ${u.isVip ? "admin-vip-active" : ""}" data-action="toggle-admin-vip" data-user-id="${Number(u.user_id)}" aria-pressed="${Boolean(u.isVip)}" aria-busy="${adminVipPending.has(Number(u.user_id))}" aria-label="${u.vip_admin_granted ? "Снять назначенный" : "Назначить"} VIP пользователю ${Number(u.user_id)}" aria-describedby="admin-vip-note-${Number(u.user_id)}" ${adminVipPending.has(Number(u.user_id)) || !adminVipSupported(u) ? "disabled" : ""} ${!adminVipSupported(u) ? 'title="Обновите backend для управления VIP по ID"' : ""}>${adminIcon("crown")}<span>VIP</span></button>
                 </div>
                 <p class="admin-vip-source-note" id="admin-vip-note-${Number(u.user_id)}" ${u.vip_protected ? "" : "hidden"}>Другое право VIP сохранится при снятии назначения администратора.</p>
                 <div class="admin-user-composer" hidden>
@@ -2243,7 +2346,7 @@ const faqAnswers = {
     6: "Охота на кометы доступна только пользователям с активной подпиской SOL VPN. Приобрести подписку можно во вкладке «Кабинет».",
     7: "Дождитесь появления кометы в зоне действия радара. Нажмите мышкой или кликните пальцем по комете, чтобы поймать её.",
     8: "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения.",
-    9: "Мы нашли несколько сервисов, которые позволяют приобрести Telegram Stars. Сравните цены и выберите подходящий вариант."
+    9: "Мы подобрали сервис для покупки Telegram Stars. Перед покупкой сравните условия."
 };
 
 // Tune the local replacement and the bounded left-to-right wave here.
@@ -2256,7 +2359,7 @@ const FAQ_ANIMATION = Object.freeze({
     blurPx: 1.4,
     actionRiseMs: 400,
     actionStaggerMs: 120,
-    actionLeadMs: 180,
+    actionLeadMs: 300,
     actionOffsetPx: 18
 });
 
@@ -2436,31 +2539,15 @@ function snapshotFaqActions() {
 
 function renderFaqActions() {
     const container = document.getElementById("faq-answer-actions");
-    const secondEnabled = window.SOL_FAQ_STARS_SECOND_ENABLED === true;
-    const urls = ["https://t.me/HelperStars_Robot?start=8544752152", "https://t.me/x10starsbot?start=8fee8aacda15d7c3"];
-    const rows = urls.map((url, index) => {
-        const row = document.createElement("div");
-        row.className = "faq-star-row";
-        const label = document.createElement("span");
-        label.textContent = `Вариант №${index + 1} —`;
-        const enabled = index === 0 || secondEnabled;
-        const link = document.createElement(enabled ? "a" : "button");
-        link.className = "faq-star-link";
-        link.textContent = "Перейти";
-        link.setAttribute("aria-label", `Вариант №${index + 1} — Перейти${enabled ? "" : ", временно недоступен"}`);
-        if (enabled) {
-            link.href = url;
-            link.target = "_blank";
-            link.rel = "noopener noreferrer";
-            link.addEventListener("click", event => {
-                if (faqState.selectedId !== 9 || !container.contains(row) || !faqState.targetActions) { event.preventDefault(); return; }
-                if (typeof tg?.openTelegramLink === "function") { event.preventDefault(); tg.openTelegramLink(url); }
-            });
-        } else { link.type = "button"; link.disabled = true; }
-        row.append(label, link);
-        container.appendChild(row);
-        return row;
+    const url = "https://t.me/HelperStars_Robot?start=8544752152";
+    const row = document.createElement("div"); row.className = "faq-star-row faq-single-link";
+    const link = document.createElement("a"); link.className = "faq-star-link"; link.textContent = "Перейти";
+    link.href = url; link.target = "_blank"; link.rel = "noopener noreferrer";
+    link.addEventListener("click", event => {
+        if (faqState.selectedId !== 9 || !container.contains(row) || !faqState.targetActions) { event.preventDefault(); return; }
+        if (typeof tg?.openTelegramLink === "function") { event.preventDefault(); tg.openTelegramLink(url); }
     });
+    row.append(link); container.append(row); const rows = [row];
     const ad = window.SOL_FAQ_STARS_AD_INFO;
     if (ad && [ad.advertiser, ad.erid, ad.detailsUrl].some(value => typeof value === "string" && value.trim())) {
         const disclosure = document.createElement("details");
@@ -2520,7 +2607,7 @@ async function animateDipText(newText, withActions = false) {
     cancelFaqAnimations();
     const container = document.getElementById("terminal-text");
     const liveAnswer = document.getElementById("faq-answer-live");
-    const reducedMotion = faqState.motionQuery?.matches || typeof container.animate !== "function";
+    const reducedMotion = faqState.motionQuery?.matches || window.SolAppearance?.animationsAllowed() === false || typeof container.animate !== "function";
     const viewport = document.getElementById("terminal-answer-viewport");
     liveAnswer.textContent = newText;
     const previousActions = snapshotFaqActions();
@@ -2662,116 +2749,75 @@ function toggleTariffs(forceOpen = false) {
 
 async function paySelectedTariff() {
     if (!selectedMonths || paymentInProgress) return;
-    const months = selectedMonths;
+    const months = selectedMonths, owner = paymentOwner, operation = ++paymentOperation;
     let quote = paymentQuote(months);
     const sheetRevision = paymentSheetState.open ? paymentSheetState.revision : null;
-    if (!paymentCatalog.enabled || !Number.isSafeInteger(quote?.amount) || quote.amount < 1) {
-        showToast("Оплата Stars пока недоступна", "error");
-        return;
-    }
-    if (!tg?.openInvoice) {
-        showToast("Telegram openInvoice недоступен", "error");
-        return;
-    }
-    paymentInProgress = true;
-    tg?.MainButton?.disable?.();
-    renderPaymentMethods();
+    if (!paymentCatalog.enabled || !Number.isSafeInteger(quote?.amount) || quote.amount < 1) return showToast("Оплата Stars пока недоступна", "error");
+    if (!tg?.openInvoice) return showToast("Telegram openInvoice недоступен", "error");
+    const finish = () => {
+        if (owner !== paymentOwner || operation !== paymentOperation) return;
+        paymentInProgress = false; tg?.MainButton?.hideProgress?.(); renderPaymentMethods();
+    };
+    paymentInProgress = true; tg?.MainButton?.disable?.(); renderPaymentMethods();
     try {
-        if (!await preparePaymentAttempt("telegram_stars", months)) { paymentInProgress = false; selectTariff(selectedMonths); return; }
+        if (!await preparePaymentAttempt("telegram_stars", months)) { finish(); return; }
+        if (owner !== paymentOwner || selectedMonths !== months) { finish(); return; }
         quote = paymentQuote(months);
-        if (!paymentCatalog.enabled || !Number.isSafeInteger(quote?.amount)) { paymentInProgress = false; selectTariff(selectedMonths); return; }
-        // Reuse a request after a lost response; never trust the client to set its price.
+        if (!paymentCatalog.enabled || !Number.isSafeInteger(quote?.amount)) { finish(); return; }
         if (!paymentAttempts[months]) {
-            paymentAttempts[months] = { months, amount: quote.amount,
-                discountPercent: Number(quote.discount_percent || 0), key: newPaymentKey(), orderId: null };
+            paymentAttempts[months] = { months, amount: quote.amount, discountPercent: Number(quote.discount_percent || 0), key: newPaymentKey(), orderId: null };
             persistPaymentAttempts();
         }
         const attempt = paymentAttempts[months];
-        const result = await apiFetch("/api/payments/invoice", {
-            method: "POST",
-            headers: { "Idempotency-Key": attempt.key },
-            body: JSON.stringify({ months, expected_currency: "XTR", expected_amount: quote.amount })
-        });
-        if (!checkoutUuid.test(result.order_id) || (attempt.orderId && attempt.orderId !== result.order_id)
-            || (result.provider || result.channel) !== "telegram_stars" || result.currency !== "XTR" || result.amount !== attempt.amount) {
-            throw new Error("Параметры счёта требуют сверки; обновите тарифы");
-        }
+        activatePaymentUi(attempt, "telegram_stars");
+        const result = await apiFetch("/api/payments/invoice", { method: "POST", headers: { "Idempotency-Key": attempt.key },
+            body: JSON.stringify({ months, expected_currency: "XTR", expected_amount: quote.amount }) });
+        if (owner !== paymentOwner) return;
+        if (result.currency !== "XTR" || result.amount !== attempt.amount || !checkoutUuid.test(result.order_id)
+            || (result.provider || result.channel) !== "telegram_stars") throw new Error("Параметры Stars-счёта требуют сверки");
         attempt.orderId = result.order_id;
-        syncPaymentExpiry(attempt, result);
-        rememberPaymentOrder(attempt, "telegram_stars");
-        persistPaymentAttempts();
-        renderPaymentCountdowns();
-        if (result.status === "expired") {
-            setCheckoutStatus(months, "Время оплаты истекло"); paymentInProgress = false; selectTariff(selectedMonths); return;
+        if (paymentUiOrder?.key === attempt.key) paymentUiOrder.orderId = result.order_id;
+        syncPaymentExpiry(attempt, result); rememberPaymentOrder(attempt, "telegram_stars"); persistPaymentAttempts();
+        if (resolvePaymentUi(attempt, "telegram_stars")) {
+            if (attempt.status === "paid") await loadBootstrap(false);
+            finish(); return;
         }
-        if (result.status === "paid") {
-            if (paymentAttempts[months]?.orderId === result.order_id) delete paymentAttempts[months];
-            persistPaymentAttempts();
-            paymentInProgress = false;
-            await loadBootstrap(false);
-            selectTariff(selectedMonths);
-            showToast("✅ Сервер подтвердил ранее полученную оплату");
-            return;
-        }
-        if (["refunded", "review", "error"].includes(result.status)) {
-            if (result.status === "refunded") { if (paymentAttempts[months]?.orderId === result.order_id) delete paymentAttempts[months]; persistPaymentAttempts(); }
-            throw new Error("Счёт закрыт или требует проверки. Обратитесь в /paysupport");
-        }
-        if (!result.invoice_url) throw new Error("Состояние счёта уточняется. Повторите попытку позже или обратитесь в /paysupport");
-        if (sheetRevision !== null && (!paymentSheetState.open || paymentSheetState.revision !== sheetRevision)) {
-            paymentInProgress = false;
-            selectTariff(selectedMonths);
-            return;
-        }
-        closePaymentSheet();
-        tg.MainButton?.showProgress?.();
-        tg.openInvoice(result.invoice_url, async status => {
+        if (result.status === "review") throw new Error("Счёт требует проверки. Обратитесь в /paysupport");
+        if (!result.invoice_url) throw new Error("Состояние счёта уточняется. Повторите позже или обратитесь в /paysupport");
+        if (attempt.uiHidden || (sheetRevision !== null && (!paymentSheetState.open || paymentSheetState.revision !== sheetRevision))) { finish(); return; }
+        renderPaymentCountdowns(); closePaymentSheet(true); tg?.MainButton?.showProgress?.();
+        tg.openInvoice(result.invoice_url, async clientStatus => {
             try {
-                if (status === "paid" || status === "pending") {
-                    showToast("Проверяю оплату на сервере…");
-                    let verified = false, expired = false;
+                if (owner !== paymentOwner) return;
+                if (clientStatus === "cancelled" || clientStatus === "failed") {
+                    resolvePaymentUi(attempt, "telegram_stars", { cancelled: true });
+                    if (clientStatus === "failed") showToast("Оплата не прошла. Счёт можно проверить после повторного выбора тарифа.", "error");
+                } else if (clientStatus === "paid" || clientStatus === "pending") {
+                    let resolved = false;
                     for (let poll = 0; poll < 8; poll++) {
                         const order = await apiFetch(`/api/payments/orders/${encodeURIComponent(result.order_id)}`);
-                        if (order.order_id !== result.order_id || (order.provider || order.channel) !== "telegram_stars"
-                            || order.currency !== "XTR" || order.amount !== attempt.amount) throw new Error("Параметры заказа требуют сверки");
+                        if (owner !== paymentOwner) return;
+                        if (order.order_id !== result.order_id || (order.provider || order.channel) !== "telegram_stars" || order.currency !== "XTR" || order.amount !== attempt.amount)
+                            throw new Error("Параметры подтверждения Stars требуют сверки");
                         syncPaymentExpiry(attempt, order); rememberPaymentOrder(attempt, "telegram_stars");
-                        if (order.status === "paid") {
-                            await loadBootstrap(false);
-                            showToast("✅ Сервер подтвердил оплату и обновил подписку");
-                            if (paymentAttempts[months]?.orderId === result.order_id) delete paymentAttempts[months];
-                            persistPaymentAttempts();
-                            verified = true;
-                            break;
+                        if (resolvePaymentUi(attempt, "telegram_stars")) {
+                            if (attempt.status === "paid") await loadBootstrap(false);
+                            resolved = true; break;
                         }
-                        if (order.status === "expired") { expired = true; break; }
-                        if (["refunded", "review", "error"].includes(order.status)) break;
+                        if (order.status === "review") break;
                         await new Promise(resolve => setTimeout(resolve, 750));
                     }
-                    if (!verified) showToast(expired ? "Время оплаты истекло" : "Подтверждение ещё не получено. Проверьте позже или напишите /paysupport");
-                } else if (status === "cancelled") {
-                    showToast("Оплата отменена");
-                } else if (status === "failed") {
-                    showToast("Оплата не прошла. Можно повторно открыть тот же счёт", "error");
+                    if (!resolved) showToast("Подтверждение ещё не получено. Проверьте позже или напишите /paysupport");
                 }
-            } catch (_) {
-                showToast("Не удалось проверить оплату. Проверьте позже или напишите /paysupport", "error");
-            } finally {
-                paymentInProgress = false;
-                persistPaymentAttempts();
-                tg.MainButton?.hideProgress?.();
-                selectTariff(selectedMonths);
-            }
+            } catch (_) { showToast("Не удалось проверить оплату. Проверьте позже или напишите /paysupport", "error"); }
+            finally { if (owner === paymentOwner) persistPaymentAttempts(); finish(); renderPaymentCountdowns(); }
         });
     } catch (error) {
-        if (error.status === 409 && /Стоимость изменилась|Повторный запрос/.test(error.message)) {
-            delete paymentAttempts[months];
-            persistPaymentAttempts();
+        if (owner !== paymentOwner) return;
+        if (error.status === 409 && !paymentAttempts[months]?.orderId && /Стоимость изменилась|Повторный запрос/.test(error.message)) {
+            delete paymentAttempts[months]; persistPaymentAttempts();
         }
-        paymentInProgress = false;
-        tg?.MainButton?.hideProgress?.();
-        selectTariff(selectedMonths);
-        await loadBootstrap(false);
-        showToast(`🚨 Оплата: ${error.message}`, "error");
+        await loadBootstrap(false); finish(); showToast(`Оплата: ${error.message}`, "error");
     }
 }
 
@@ -2801,6 +2847,7 @@ function initTelegramMainButton() {
 // 🧭 НАВИГАЦИЯ
 // ==========================================
 function switchNav(index, screenId) {
+    if (screenId !== "settings" && !paymentSheetState.open) tg?.BackButton?.hide?.();
     if (screenId !== "info" && faqState.initialized) suspendInfoFAQ();
     document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
     document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
@@ -2819,7 +2866,7 @@ function switchNav(index, screenId) {
     if (screenId === 'info') {
         initInfoFAQ();
     }
-    if (screenId === 'admin' && isAdmin && !adminUsersState.initialized) loadAdminUsers(true);
+    if (screenId === 'admin' && isAdmin) { if (!adminUsersState.initialized) loadAdminUsers(true); if (!vipDirectory.complete) void loadVipDirectory(); }
     if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
 }
 
@@ -2913,6 +2960,9 @@ function initActionHandlers() {
                     await giftPromoToUser(Number(target.dataset.userId), target.dataset.username || "");
                     break;
                 case "switch-nav": switchNav(Number(target.dataset.index), target.dataset.screen); break;
+                case "open-settings": switchNav(1,"settings"); tg?.BackButton?.show?.(); break;
+                case "close-settings": switchNav(1,"profile"); break;
+                case "refresh-vip-directory": await loadVipDirectory(true); break;
                 default: break;
             }
         } catch (error) {
@@ -2941,6 +2991,8 @@ window.addEventListener("load", async () => {
     alignNavBox(0);
     initTelegramMainButton();
     initPaymentSheet();
+    window.SolAppearance?.init();
+    tg?.BackButton?.onClick?.(() => { if (!paymentSheetState.open && document.getElementById("screen-settings")?.classList.contains("active")) switchNav(1,"profile"); });
 
     const data = await loadBootstrap(true);
     if (data) { await checkYookassaPayment(true); await checkPendingPaymentOrders(); }
@@ -2952,4 +3004,8 @@ window.addEventListener("load", async () => {
 window.addEventListener("focus", () => { void checkPendingPaymentOrders(); });
 document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") void checkPendingPaymentOrders();
+});
+document.addEventListener("sol:appearance-change", event => {
+    if (event.detail?.paletteTransition !== false) updatePaymentCta();
+    if (faqState.initialized && document.getElementById("screen-info")?.classList.contains("active") && window.SolAppearance?.animationsAllowed() === false) void animateDipText(faqState.targetText,faqState.targetActions);
 });

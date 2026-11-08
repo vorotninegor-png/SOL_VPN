@@ -65,7 +65,7 @@ async function main() {
             return json(res, { detail: 'Not found' }, 404);
         }
         const filename = pathname === '/' ? 'index.html' : pathname.slice(1);
-        if (!['index.html', 'style.css', 'app.js', 'config.js'].includes(filename)) return res.writeHead(404).end();
+        if (!['index.html', 'style.css', 'appearance.css', 'appearance.js', 'app.js', 'config.js'].includes(filename)) return res.writeHead(404).end();
         res.setHeader('Content-Type', filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html');
         res.end(filename === 'config.js' ? '' : await fs.readFile(path.join(root, filename)));
     });
@@ -144,12 +144,12 @@ async function main() {
         });
         await check('protected VIP remains effective after the administrator grant is removed', async () => {
             const button = page.locator('[data-action="toggle-admin-vip"][data-user-id="7002"]');
-            assert.equal(await button.getAttribute('aria-pressed'), 'false');
+            assert.equal(await button.getAttribute('aria-pressed'), 'true');
             assert.equal(await page.locator('#admin-vip-note-7002').isHidden(), false);
             await button.click(); await page.waitForFunction(() => !adminVipPending.size);
             assert.equal(await button.getAttribute('aria-pressed'), 'true');
             await button.click(); await page.waitForFunction(() => !adminVipPending.size);
-            assert.equal(await button.getAttribute('aria-pressed'), 'false');
+            assert.equal(await button.getAttribute('aria-pressed'), 'true');
             assert.equal(users.find(user => user.user_id === 7002).isVip, true);
             assert.match(await page.locator('.user-row-card[data-user-id="7002"] [data-admin-vip-summary]').textContent(), /VIP: да/);
             assert.equal(await page.locator('.user-row-card[data-user-id="7002"]').evaluate(el => el.classList.contains('active-sub')), true);
@@ -177,10 +177,10 @@ async function main() {
             const decorations = await page.evaluate(() => {
                 const nodes = [...document.querySelectorAll('#screen-admin button, #screen-admin h2, #screen-admin .admin-card-title, #btn-nav-4')];
                 return { texts: nodes.map(el => el.textContent), placeholders: [...document.querySelectorAll('#screen-admin input')].map(el => el.placeholder),
-                    icons: [...document.querySelectorAll('#screen-admin svg, #btn-nav-4 svg')].map(svg => ({ box: svg.getAttribute('viewBox'), stroke: svg.getAttribute('stroke-width'), color: getComputedStyle(svg).color })) };
+                    icons: [...document.querySelectorAll('#screen-admin svg, #btn-nav-4 svg')].map(svg => ({ box: svg.getAttribute('viewBox'), stroke: svg.getAttribute('stroke-width'), color: getComputedStyle(svg).color, vip: Boolean(svg.closest('.admin-vip-active')) })) };
             });
             assert.ok(decorations.icons.length > 100);
-            assert.ok(decorations.icons.every(svg => svg.box === '0 0 24 24' && svg.stroke === '1.7' && svg.color === 'rgb(255, 255, 255)'));
+            assert.ok(decorations.icons.every(svg => svg.box === '0 0 24 24' && svg.stroke === '1.7' && svg.color === (svg.vip ? 'rgb(255, 228, 157)' : 'rgb(255, 255, 255)')));
             assert.ok([...decorations.texts, ...decorations.placeholders].every(text => !/\p{Extended_Pictographic}/u.test(text)));
             assert.equal(await page.locator('.toast.admin-toast svg').count() > 0, true);
         });
@@ -229,7 +229,7 @@ async function main() {
             await page.locator('[data-action="add-vip-user"]').click();
             await loaded(page, 1);
             assert.equal(await page.locator('#admin-search-user').inputValue(), 'Егор');
-            await page.locator('[data-action="remove-vip-user"]').click();
+            await page.locator('[data-action="remove-vip-user"][data-user-id="7000"]').click();
             await loaded(page, 1);
             assert.ok(requests.some(req => req.url === '/api/admin/vip' && req.method === 'DELETE'));
         });

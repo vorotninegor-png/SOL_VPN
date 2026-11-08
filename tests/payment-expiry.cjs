@@ -50,7 +50,7 @@ async function main() {
             state.inFlight--;const body={...result(order),...state.getOverride};if(state.badIdentity)body.order_id='wrong-order';return json(res,body);
         }
         const file=name==='/'?'index.html':name.slice(1);
-        if(!['index.html','style.css','app.js','config.js'].includes(file))return res.writeHead(404).end();
+        if(!['index.html','style.css','appearance.css','appearance.js','app.js','config.js'].includes(file))return res.writeHead(404).end();
         res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');
         res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
     });
@@ -69,7 +69,7 @@ async function main() {
     }
     const posts=()=>state.requests.filter(r=>r.method==='POST').length;
     async function idle(page){await page.waitForFunction(()=>!paymentInProgress&&!yookassaCheckBusy&&!paymentOrderChecks.size)}
-    async function stars(page){await page.evaluate(()=>window.invoiceCallback=null);await page.locator('#pay-stars').click();await page.waitForFunction(()=>Boolean(window.invoiceCallback));await page.evaluate(()=>window.invoiceCallback('cancelled'));await idle(page)}
+    async function stars(page){await page.evaluate(()=>{selectTariff(6);openPaymentSheet();window.invoiceCallback=null});await page.locator('#pay-stars').click();await page.waitForFunction(()=>Boolean(window.invoiceCallback));await page.reload();await page.waitForFunction(()=>userData?.id===7001);await page.locator('#btn-nav-1').click();await idle(page)}
     async function advance(page,seconds){state.elapsed+=seconds*1000;await page.evaluate(ms=>{window.fakeNow+=ms;renderPaymentCountdowns()},seconds*1000);await page.waitForFunction(()=>!paymentOrderChecks.size)}
     const time=page=>page.locator('#profile-payment-deadlines .payment-deadline-value').first().textContent();
     async function check(name,fn){reset();await fn();checks++;console.log(`PASS ${name}`)}
@@ -82,7 +82,7 @@ async function main() {
         });
         await check('countdown survives native invoice close, sheet reopen and reload without restarting',async()=>{
             const page=await pageFor();await stars(page);const deadline=state.orders[0].deadline;await advance(page,90);assert.equal(await time(page),'08:30');
-            await page.evaluate(()=>openPaymentSheet());assert.equal(await page.locator('#sheet-payment-deadlines .payment-deadline-value').textContent(),'08:30');
+            await page.evaluate(()=>{selectTariff(6);openPaymentSheet()});assert.equal(await page.locator('#sheet-payment-deadlines .payment-deadline-value').textContent(),'08:30');
             await page.reload();await page.waitForFunction(()=>userData?.id===7001);await idle(page);assert.equal(await time(page),'08:30');assert.equal(state.orders[0].deadline,deadline);assert.equal(posts(),1);await page.context().close();
         });
         await check('last 60 seconds are amber without blinking and timer updates preserve focused controls',async()=>{
@@ -98,23 +98,23 @@ async function main() {
         });
         await check('expiry performs read-only verification, never auto-creates, and explicit retry keeps old ID history',async()=>{
             const page=await pageFor();await stars(page);const old=state.orders[0];await advance(page,600);
-            assert.equal(await time(page),'Время оплаты истекло');assert.equal(posts(),1);assert.equal(await page.evaluate(()=>isSubscribedUser),false);
-            await page.evaluate(()=>openPaymentSheet());await stars(page);assert.equal(posts(),2);assert.notEqual(state.orders[1].key,old.key);
+            assert.equal(await page.locator('#profile-payment-deadlines').isHidden(),true);assert.equal(await page.evaluate(()=>selectedMonths),null);assert.equal(posts(),1);assert.equal(await page.evaluate(()=>isSubscribedUser),false);
+            await page.evaluate(()=>{selectTariff(6);openPaymentSheet()});await stars(page);assert.equal(posts(),2);assert.notEqual(state.orders[1].key,old.key);
             assert.equal(await page.evaluate(id=>paymentOrderHistory[`telegram_stars:${id}`].archived,old.order_id),true);
             assert.ok((await page.locator('#profile-payment-deadlines').textContent()).includes('10:00'));await page.context().close();
         });
         await check('late paid on archived expired order updates subscription without deleting a newer attempt',async()=>{
-            const page=await pageFor();await stars(page);const old=state.orders[0];await advance(page,600);await page.evaluate(()=>openPaymentSheet());await stars(page);
+            const page=await pageFor();await stars(page);const old=state.orders[0];await advance(page,600);await page.evaluate(()=>{selectTariff(6);openPaymentSheet()});await stars(page);
             const newer=state.orders[1];state.paid.add(old.order_id);await page.evaluate(id=>checkPaymentOrder('telegram_stars',id),old.order_id);await idle(page);
             assert.equal(await page.evaluate(()=>isSubscribedUser),true);assert.equal(await page.evaluate(()=>paymentAttempts[6].orderId),newer.order_id);assert.equal(posts(),2);await page.context().close();
         });
         await check('expired held discount refreshes displayed price and requires another explicit click before full-price order',async()=>{
             state.discount=30;const page=await pageFor();await stars(page);assert.equal(state.orders[0].amount,350);await advance(page,600);state.discount=0;state.held=true;
-            await page.evaluate(()=>openPaymentSheet());await page.locator('#pay-stars').click();await idle(page);assert.equal(posts(),1);assert.equal(await page.locator('#stars-price').textContent(),'500 ⭐');
+            await page.evaluate(()=>{selectTariff(6);openPaymentSheet()});await page.locator('#pay-stars').click();await idle(page);assert.equal(posts(),1);assert.equal(await page.locator('#stars-price').textContent(),'500 ⭐');
             assert.equal(await page.locator('#payment-discount-pending').isHidden(),false);await stars(page);assert.equal(posts(),2);assert.equal(state.orders[1].amount,500);await page.context().close();
         });
         await check('Stars and YooKassa deadlines remain independent and restore together from backend',async()=>{
-            const page=await pageFor();await stars(page);await advance(page,120);await page.evaluate(()=>openPaymentSheet());await page.locator('#pay-yookassa').click();await idle(page);
+            const page=await pageFor();await stars(page);await advance(page,120);await page.evaluate(()=>{selectTariff(6);openPaymentSheet()});await page.locator('#pay-yookassa').click();await idle(page);
             const values=await page.locator('#profile-payment-deadlines .payment-deadline-value').allTextContents();assert.ok(values.includes('08:00')&&values.includes('10:00'));
             await page.evaluate(()=>localStorage.clear());await page.reload();await page.waitForFunction(()=>userData?.id===7001);await idle(page);
             assert.equal(await page.locator('#profile-payment-deadlines .payment-deadline').count(),2);assert.equal(posts(),2);
@@ -122,7 +122,7 @@ async function main() {
             state.user=7002;await page.evaluate(()=>loadBootstrap(false));assert.equal(await page.locator('#profile-payment-deadlines').isHidden(),true);await page.context().close();
         });
         await check('wrong returned order identity cannot change an expired payment or create a replacement',async()=>{
-            const page=await pageFor();await stars(page);state.badIdentity=true;await advance(page,600);await page.evaluate(()=>openPaymentSheet());await page.locator('#pay-stars').click();await idle(page);
+            const page=await pageFor();await stars(page);state.badIdentity=true;await advance(page,600);await page.evaluate(()=>{selectTariff(6);openPaymentSheet()});await page.locator('#pay-stars').click();await idle(page);
             assert.equal(posts(),1);assert.equal(await page.evaluate(()=>isSubscribedUser),false);await page.context().close();
         });
         await check('Stars creation validates UUID, provider, currency and exact server amount before native invoice',async()=>{

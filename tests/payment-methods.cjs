@@ -20,13 +20,13 @@ async function main(){
     const server=http.createServer(async(req,res)=>{
         const name=new URL(req.url,'http://localhost').pathname;
         if(name.startsWith('/api/'))state.requests.push({path:name,method:req.method});
-        if(name==='/api/bootstrap')return json(res,{user:{id:7001},subscription:{active:state.active,days_left:state.active?30:0},
+        if(name==='/api/bootstrap'){if(state.bootstrapDelay)await new Promise(resolve=>setTimeout(resolve,state.bootstrapDelay));return json(res,{user:{id:7001},subscription:{active:state.active,days_left:state.active?30:0},
             tariffs:[1,3,6,12].map(months=>({months,price_kopecks:quote(months).amount_kopecks,discount_percent:quote(months).discount_percent})),
             payment:{channel:'telegram_stars',currency:'XTR',enabled:true,tariffs:[1,3,6,12].map(starQuote),
                 ...(!state.legacy?{providers:{yookassa:{currency:'RUB',enabled:state.enabled,tariffs:state.enabled?[1,3,6,12].map(quote):[]}},
                     pending_orders:state.orders.filter(o=>['pending','confirming','review'].includes(o.status)).map(o=>({order_id:o.order_id,provider:'yookassa',months:o.months,
                         amount_kopecks:o.amount_kopecks,discount_percent:o.discount_percent,status:o.status,request_id:o.key,
-                        checkout_delivery:{state:state.delivery,bot_url:'https://t.me/SOLTestBot'}}))}:{})}});
+                        checkout_delivery:{state:state.delivery,bot_url:'https://t.me/SOLTestBot'}}))}:{})}});}
         if(name==='/api/payments/yookassa/order'){
             const chunks=[];for await(const c of req)chunks.push(c);
             const body=JSON.parse(Buffer.concat(chunks).toString());
@@ -53,7 +53,7 @@ async function main(){
         }
         if(name===`/api/payments/orders/${starsId}`){state.active=true;return json(res,{order_id:starsId,provider:'telegram_stars',currency:'XTR',amount:350,status:'paid'})}
         const file=name==='/'?'index.html':name.slice(1);
-        if(!['index.html','app.js','style.css','config.js'].includes(file))return res.writeHead(404).end();
+        if(!['index.html','app.js','appearance.js','style.css','appearance.css','config.js'].includes(file))return res.writeHead(404).end();
         res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');
         res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
     });
@@ -122,7 +122,7 @@ async function main(){
             const page=await pageFor();await page.locator('#pay-yookassa').click();await idle(page);
             await page.locator('#check-yookassa').click();await idle(page);assert.equal(await page.evaluate(()=>isSubscribedUser),false);
             state.status='paid';await page.locator('#check-yookassa').click();await idle(page);
-            assert.equal(await page.evaluate(()=>isSubscribedUser),true);assert.match(await page.locator('#checkout-status').textContent(),/подтверждена сервером/);
+            assert.equal(await page.evaluate(()=>isSubscribedUser),true);assert.equal(await page.locator('#checkout-status').textContent(),'');assert.equal(await page.evaluate(()=>selectedMonths),null);assert.match(await page.locator('#toast-container').textContent(),/подтверждена сервером/);
             await page.context().close();
         });
         await check('pending order restores after clearing storage without opening browser automatically',async()=>{
@@ -130,7 +130,7 @@ async function main(){
             const first=state.requests.find(r=>r.path==='/api/payments/yookassa/order').key;
             const storage=await page.evaluate(()=>localStorage.getItem('sol-checkout:7001:yookassa'));
             assert.ok(!storage.includes('https:')&&!storage.includes('quote_token')&&!storage.includes('initData'));
-            await page.evaluate(()=>localStorage.clear());await page.reload();await page.waitForFunction(()=>selectedMonths===6);await idle(page);
+            await page.evaluate(()=>localStorage.clear());await page.reload();await page.waitForFunction(()=>userData?.id===7001);await idle(page);assert.equal(await page.evaluate(()=>selectedMonths),null);
             assert.equal(await page.evaluate(()=>checkoutLinks.length),0);assert.equal(await page.evaluate(()=>yookassaAttempts[6].key),first);
             await page.context().close();
         });
@@ -181,7 +181,7 @@ async function main(){
             assert.equal(state.requests.filter(r=>r.path==='/api/payments/yookassa/order').length,1);await page.context().close();
         });
         await check('unknown bot delivery offers the same safe fallback without re-creating checkout',async()=>{
-            reset({delivery:'unknown'});const page=await pageFor();await page.locator('#pay-yookassa').click();await idle(page);
+            reset({delivery:'unknown',bootstrapDelay:120});const page=await pageFor();await page.locator('#pay-yookassa').click();await idle(page);
             state.status='paid';await page.locator('#checkout-open-link').click();await idle(page);
             assert.equal(await page.evaluate(()=>checkoutLinks.length),0);assert.equal(await page.evaluate(()=>isSubscribedUser),true);
             assert.equal(state.orders.length,1);await page.context().close();
@@ -191,8 +191,8 @@ async function main(){
             assert.equal(await page.locator('#checkout-open-link').isVisible(),true);state.delivery='sent';
             await page.locator('#check-yookassa').click();await idle(page);assert.equal(await page.locator('#checkout-open-bot').isVisible(),true);
             assert.equal(await page.locator('#checkout-open-link').isVisible(),false);
-            await page.evaluate(()=>localStorage.clear());await page.reload();await page.waitForFunction(()=>selectedMonths===6);await idle(page);
-            await page.evaluate(()=>window.mainClick());await page.locator('#checkout-open-bot').click();
+            await page.evaluate(()=>localStorage.clear());await page.reload();await page.waitForFunction(()=>userData?.id===7001);await idle(page);assert.equal(await page.evaluate(()=>selectedMonths),null);
+            await page.evaluate(()=>{selectTariff(6);window.mainClick()});await page.locator('#checkout-open-bot').click();
             assert.deepEqual(await page.evaluate(()=>botLinks),['https://t.me/SOLTestBot']);assert.equal(state.orders.length,1);await page.context().close();
         });
         await check('closing during fallback status check does not open an external browser later',async()=>{
@@ -201,14 +201,14 @@ async function main(){
             assert.equal(await page.evaluate(()=>checkoutLinks.length),0);assert.equal(state.orders.length,1);await page.context().close();
         });
         await check('closing during Stars creation suppresses late invoice UI and preserves its key',async()=>{
-            reset({invoiceDelay:160});const page=await pageFor();await page.evaluate(()=>{void paySelectedTariff();closePaymentSheet()});await idle(page);
+            reset({invoiceDelay:160});const page=await pageFor();await page.evaluate(()=>{void paySelectedTariff()});await page.waitForTimeout(45);await page.evaluate(()=>closePaymentSheet());await idle(page);
             assert.equal(await page.evaluate(()=>invoices.length),0);assert.equal(state.requests.filter(r=>r.path==='/api/payments/invoice').length,1);
             assert.ok(await page.evaluate(()=>paymentAttempts[6].orderId));await page.context().close();
         });
         await check('old snapshot prices are explicitly marked when a new discount lowers the headline price',async()=>{
             const page=await pageFor();await page.locator('#pay-yookassa').click();await idle(page);await page.locator('#pay-stars').click();
             await page.waitForFunction(()=>invoices.length===1);await page.evaluate(()=>invoiceCallback('cancelled'));await idle(page);
-            state.price=59940;state.stars=300;state.discount=40;await page.evaluate(async()=>{await loadBootstrap(false);window.mainClick()});
+            state.price=59940;state.stars=300;state.discount=40;await page.evaluate(async()=>{await loadBootstrap(false);selectTariff(6);window.mainClick()});
             assert.equal(await page.locator('#payment-cost').textContent(),'599,40 ₽');assert.equal(await page.locator('#yookassa-price').textContent(),'699,30 ₽');
             assert.equal(await page.locator('#stars-price').textContent(),'350 ⭐');assert.equal(await page.locator('#payment-snapshot-note').isVisible(),true);
             assert.equal(await page.locator('#yookassa-saved-note').isVisible(),true);assert.equal(await page.locator('#stars-saved-note').isVisible(),true);
@@ -221,7 +221,7 @@ async function main(){
             await page.locator('#payment-sheet-close').click();
             assert.equal(await page.locator('#payment-sheet-backdrop').isVisible(),false);
             assert.equal(await page.evaluate(()=>document.querySelector('.app-container').inert),false);
-            await page.evaluate(()=>window.mainClick());await page.mouse.click(8,8);
+            await page.evaluate(()=>{selectTariff(6);window.mainClick()});await page.mouse.click(8,8);
             assert.equal(await page.locator('#payment-sheet-backdrop').isVisible(),false);
             assert.equal(state.orders.length,0);assert.equal(state.requests.some(r=>r.method==='POST'),false);await page.context().close();
         });
@@ -229,7 +229,7 @@ async function main(){
             const page=await pageFor();await page.locator('#payment-sheet-close').focus();await page.keyboard.press('Shift+Tab');
             assert.equal(await page.evaluate(()=>document.activeElement.id),'pay-stars');await page.keyboard.press('Tab');
             assert.equal(await page.evaluate(()=>document.activeElement.id),'payment-sheet-close');await page.keyboard.press('Escape');
-            await page.evaluate(()=>{delete tg.MainButton;updatePaymentCta()});await page.locator('#payment-open-button').click();
+            await page.evaluate(()=>{delete tg.MainButton;selectTariff(6);updatePaymentCta()});await page.locator('#payment-open-button').click();
             const box=await page.locator('#payment-sheet-swipe').boundingBox();await page.mouse.move(box.x+15,box.y+10);await page.mouse.down();
             await page.mouse.move(box.x+15,box.y+110,{steps:6});await page.mouse.up();
             assert.equal(await page.locator('#payment-sheet-backdrop').isVisible(),false);assert.equal(state.orders.length,0);await page.context().close();
@@ -239,7 +239,7 @@ async function main(){
             assert.equal(await page.locator('#payment-methods').evaluate(el=>getComputedStyle(el).transitionDuration),'0.33s, 0.33s');
             await page.waitForTimeout(65);const opacity=await page.locator('#payment-methods').evaluate(el=>Number(getComputedStyle(el).opacity));
             assert.ok(opacity>0&&opacity<1);
-            await page.waitForTimeout(350);await page.evaluate(()=>{closePaymentSheet();openPaymentSheet()});await page.waitForTimeout(400);
+            await page.waitForTimeout(350);await page.evaluate(()=>{closePaymentSheet();selectTariff(6);openPaymentSheet()});await page.waitForTimeout(400);
             assert.equal(await page.locator('#payment-sheet-backdrop').isVisible(),true);await page.evaluate(()=>closePaymentSheet());
             assert.equal(await page.locator('#payment-sheet-backdrop').isVisible(),true);await page.waitForTimeout(400);
             assert.equal(await page.locator('#payment-sheet-backdrop').isVisible(),false);assert.equal(await page.evaluate(()=>document.querySelector('.app-container').inert),false);
