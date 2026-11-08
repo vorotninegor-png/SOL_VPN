@@ -2,8 +2,6 @@
 // For a same-origin reverse proxy, leave SOL_API_BASE_URL empty.
 window.SOL_API_BASE_URL = "https://api.example.com";
 
-// The second Stars service stays disabled until its terms have been reviewed.
-window.SOL_FAQ_STARS_SECOND_ENABLED = false;
 // Populate only with verified advertising disclosures before publication, when applicable.
 // Do not invent advertiser information or an advertising identifier.
 window.SOL_FAQ_STARS_AD_INFO = { advertiser: "", erid: "", detailsUrl: "" };

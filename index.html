@@ -2,20 +2,23 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>SOL VPN App</title>
+    <style>html{background:var(--sol-bg-deep,#070610)}html[data-appearance-ready="false"] .app-container{visibility:hidden}</style>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Ubuntu:wght@400;500;700&display=swap" rel="stylesheet">
     
     <script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+    <script src="appearance.js?v=5008"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"></script>
     
-    <link rel="stylesheet" href="style.css?v=5007">
+    <link rel="stylesheet" href="style.css?v=5008">
+    <link rel="stylesheet" href="appearance.css?v=5008">
 
     <style>
         /* 🚨 МАКСИМАЛЬНЫЙ ПРИОРИТЕТ ДЛЯ ХИТБОКСОВ СЛОЕВ ВЕРСТКИ 🚨 */
@@ -123,6 +126,7 @@
     <div class="screen" id="screen-profile">
         <div class="profile-header">
             <h2>👤 ТВОЙ ПРОФИЛЬ SOL</h2>
+            <button class="settings-open" type="button" data-action="open-settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1-2 3 2 2v3l3 2 1 4h6l1-4 3-2v-3l2-2-2-3-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg>Настройки</button>
         </div>
 
         <div class="sub-card">
@@ -503,7 +507,7 @@
             </div>
 
             <div class="admin-card">
-                <div class="admin-card-title"><span class="admin-icon-slot" data-admin-icon="crown" aria-hidden="true"></span> НАЗНАЧЕННЫЕ VIP</div>
+                <div class="admin-card-title"><span class="admin-icon-slot" data-admin-icon="crown" aria-hidden="true"></span> ВСЕ VIP</div>
                 <div class="promo-input-row" style="margin-bottom: 10px;">
                     <input type="text" id="admin-approved-input" placeholder="@username">
                     <button class="apply-promo-btn" data-action="add-vip-user" aria-label="Назначить VIP по username">
@@ -515,6 +519,8 @@
                 <div class="drum-list-viewport">
                     <div class="drum-list-inner" id="approved-users-drum"></div>
                 </div>
+                <p class="admin-users-status" id="admin-vip-list-status" role="status" aria-live="polite"></p>
+                <button type="button" class="user-profile-btn" data-action="refresh-vip-directory">Обновить VIP-список</button>
             </div>
 
             <div class="admin-card">
@@ -535,6 +541,12 @@
     <!-- ========================================== -->
     <!-- 🧭 НАВИГАЦИЯ -->
     <!-- ========================================== -->
+    <section class="screen" id="screen-settings" aria-labelledby="settings-title">
+        <div class="settings-heading"><button class="settings-back" type="button" data-action="close-settings" aria-label="Вернуться в кабинет">‹</button><h2 id="settings-title">Настройки</h2></div>
+        <div class="appearance-intro"><h3>Оформление</h3><p class="appearance-hint">Ваш SOL. Изменения сразу видны во всём приложении.</p></div>
+        <div id="appearance-controls"></div>
+        <p class="appearance-hint" id="appearance-storage-status" role="status" aria-live="polite"></p>
+    </section>
     <nav class="bottom-nav" id="app-bottom-nav">
         <div class="nav-liquid-box" id="nav-liquid-box"></div>
 
@@ -602,6 +614,6 @@
 </div>
 
 <script src="config.js?v=1"></script>
-<script src="app.js?v=5007"></script>
+<script src="app.js?v=5008"></script>
 </body>
 </html>

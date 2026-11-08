@@ -16,7 +16,7 @@ const expectedAnswers = [
     "Охота на кометы доступна только пользователям с активной подпиской SOL VPN. Приобрести подписку можно во вкладке «Кабинет».",
     "Дождитесь появления кометы в зоне действия радара. Нажмите мышкой или кликните пальцем по комете, чтобы поймать её.",
     "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения.",
-    "Мы нашли несколько сервисов, которые позволяют приобрести Telegram Stars. Сравните цены и выберите подходящий вариант."
+    "Мы подобрали сервис для покупки Telegram Stars. Перед покупкой сравните условия."
 ];
 const expectedQuestions = [
     "Как подключить VPN?",
@@ -40,7 +40,7 @@ async function main() {
         } else if (name === '/config.js') {
             res.setHeader('Content-Type', 'text/javascript');
             res.end('');
-        } else if (['/', '/index.html', '/app.js', '/style.css'].includes(name)) {
+        } else if (['/', '/index.html', '/app.js', '/appearance.js', '/style.css', '/appearance.css'].includes(name)) {
             res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html');
             res.end(await fs.readFile(path.join(root, name === '/' ? 'index.html' : name.slice(1))));
         } else {
@@ -120,23 +120,21 @@ async function main() {
             assert.equal(await page.locator('#screen-info svg.faq-icon').count(), 9);
             assert.equal(/\p{Extended_Pictographic}/u.test(await page.locator('#screen-info').textContent()), false);
         });
-        await check('Stars links use exact URLs and variant two stays disabled until configured', async () => {
-            assert.deepEqual(await page.locator('#faq-answer-actions .faq-star-row > span').allTextContents(), ['Вариант №1 —', 'Вариант №2 —']);
-            assert.equal(await page.locator('#faq-answer-actions a.faq-star-link').getAttribute('href'), 'https://t.me/HelperStars_Robot?start=8544752152');
-            assert.equal(await page.locator('#faq-answer-actions button.faq-star-link').isDisabled(), true);
-            assert.equal(await page.locator('#faq-answer-actions .faq-glyph').count(), 0);
-            assert.equal(/HelperStars|x10stars/i.test(await page.locator('#faq-answer-actions').textContent()), false);
-            await page.getByRole('link', { name: 'Вариант №1 — Перейти', exact: true }).click();
+        await check('only Helper Stars link remains even when obsolete configuration is enabled', async () => {
+            assert.equal(await page.locator('#faq-answer-actions .faq-star-row').count(), 1);
+            assert.equal(await page.locator('#faq-answer-actions a').getAttribute('href'), 'https://t.me/HelperStars_Robot?start=8544752152');
+            assert.equal(await page.locator('#faq-answer-actions a').textContent(), 'Перейти');
+            assert.equal(await page.locator('#faq-answer-actions').textContent(), 'Перейти');
+            await page.getByRole('link', { name: 'Перейти', exact: true }).click();
+            assert.deepEqual(await page.evaluate(() => openedFaqLinks), ['https://t.me/HelperStars_Robot?start=8544752152']);
             await page.evaluate(() => { window.SOL_FAQ_STARS_SECOND_ENABLED = true; faqState.selectedId = null; answerFAQ(9); });
-            await settled(page, 9);
-            assert.equal(await page.getByRole('link', { name: 'Вариант №2 — Перейти', exact: true }).getAttribute('href'), 'https://t.me/x10starsbot?start=8fee8aacda15d7c3');
-            await page.getByRole('link', { name: 'Вариант №2 — Перейти', exact: true }).click();
-            assert.deepEqual(await page.evaluate(() => openedFaqLinks), ['https://t.me/HelperStars_Robot?start=8544752152', 'https://t.me/x10starsbot?start=8fee8aacda15d7c3']);
-            await page.evaluate(() => { window.SOL_FAQ_STARS_SECOND_ENABLED = false; answerFAQ(8); }); await settled(page, 8);
+            await settled(page,9); assert.equal(await page.locator('#faq-answer-actions a').count(),1);
+            assert.equal(await page.locator('#faq-answer-actions [href*="x10"]').count(),0);
+            await page.evaluate(() => answerFAQ(8)); await settled(page,8);
         });
-        await check('Liquid Rise follows the text, staggers rows by 120 ms and grows the terminal smoothly', async () => {
+        await check('Liquid Rise follows the text and grows the terminal smoothly for one button', async () => {
             await page.evaluate(() => answerFAQ(9));
-            await page.waitForFunction(() => !document.querySelector('#faq-answer-actions').hidden && faqState.actionAnimations.length === 2);
+            await page.waitForFunction(() => !document.querySelector('#faq-answer-actions').hidden && faqState.actionAnimations.length === 1);
             const evidence = await page.evaluate(async () => {
                 const timings = faqState.actionAnimations.map(animation => ({ duration: animation.effect.getTiming().duration, delay: animation.effect.getTiming().delay, easing: animation.effect.getTiming().easing,
                     transform: animation.effect.getKeyframes()[0].transform, filter: animation.effect.getKeyframes()[0].filter }));
@@ -150,10 +148,10 @@ async function main() {
                 }
                 return { timings, samples, textAnimationDone: faqState.animations.length === 0 };
             });
-            assert.deepEqual(evidence.timings.map(t => t.duration), [400, 400]);
-            assert.equal(evidence.timings[1].delay - evidence.timings[0].delay, 120);
+            assert.deepEqual(evidence.timings.map(t => t.duration), [400]);
+            assert.ok(evidence.timings[0].delay >= 0 && evidence.timings[0].delay <= 400);
             assert.ok(evidence.timings.every(t => t.transform === 'translateY(18px)' && t.filter === 'blur(2px)' && t.easing === 'cubic-bezier(0.22, 1, 0.36, 1)'));
-            assert.ok(evidence.samples.some(s => s.opacity[0] > .25 && s.opacity[1] < .05));
+            assert.ok(evidence.samples.some(s => s.opacity[0] > .25 && s.opacity[0] < .95));
             assert.ok(new Set(evidence.samples.map(s => Math.round(s.height))).size > 3);
             assert.ok(evidence.samples.every((s, index, all) => !index || s.height >= all[index-1].height - .6));
             assert.equal(evidence.samples.some(s => s.clipped), false);
@@ -356,7 +354,7 @@ async function main() {
             await assertLayout(page);
             await page.locator('.faq-btn[data-faq-id="9"]').click();
             assert.equal(await page.locator('#terminal-text').textContent(), expectedAnswers[8]);
-            assert.equal(await page.locator('#faq-answer-actions .faq-star-row').count(), 2);
+            assert.equal(await page.locator('#faq-answer-actions .faq-star-row').count(), 1);
             assert.equal(await page.evaluate(() => faqState.actionAnimations.length), 0);
             await assertLayout(page);
         });
@@ -391,7 +389,7 @@ async function main() {
             await fallbackPage.waitForTimeout(500);
             await assertLayout(fallbackPage);
             await fallbackPage.locator('.faq-btn[data-faq-id="9"]').click();
-            assert.equal(await fallbackPage.locator('#faq-answer-actions .faq-star-row').count(), 2);
+            assert.equal(await fallbackPage.locator('#faq-answer-actions .faq-star-row').count(), 1);
             await assertLayout(fallbackPage);
             await fallbackPage.context().close();
         });
