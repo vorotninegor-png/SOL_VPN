@@ -27,15 +27,15 @@ async function main() {
             const body=JSON.parse(Buffer.concat(chunks).toString());
             scenario.requests.push({body,key:req.headers['idempotency-key']});
             if (scenario.failInvoice) return json(res,{detail:'Статус счёта неизвестен'},502);
-            return json(res,{order_id:'offline-order',invoice_url:'https://t.me/$offline',currency:'XTR',
+            return json(res,{order_id:'33333333-3333-4333-8333-333333333333',channel:'telegram_stars',invoice_url:'https://t.me/$offline',currency:'XTR',
                 amount:body.expected_amount+(scenario.mismatch?1:0),status:scenario.invoiceStatus});
         }
-        if (name === '/api/payments/orders/offline-order') {
+        if (name === '/api/payments/orders/33333333-3333-4333-8333-333333333333') {
             scenario.reads++;
             if (scenario.failStatus) return json(res,{detail:'Недоступно'},503);
             const status=scenario.statuses[Math.min(scenario.reads-1,scenario.statuses.length-1)];
             if (status === 'paid') scenario.active=true;
-            return json(res,{status,amount:100,currency:'XTR'});
+            return json(res,{order_id:'33333333-3333-4333-8333-333333333333',channel:'telegram_stars',status,amount:100,currency:'XTR'});
         }
         const file=name==='/'?'index.html':name.slice(1);
         if (!['index.html','app.js','style.css','config.js'].includes(file)) return res.writeHead(404).end();
@@ -67,11 +67,14 @@ async function main() {
     async function finish(page,status){await page.evaluate(status=>window.invoiceCallback(status),status);await page.waitForFunction(()=>!paymentInProgress)}
     try {
         browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH||undefined});
-        await check('backend Stars quote appears on all cards and the Telegram button',async()=>{
+        await check('cards stay in rubles and the chooser exposes the server Stars quote',async()=>{
             const page=await newPage();
-            for (const [i,months] of [1,3,6,12].entries()) assert.equal(await page.locator(`#price-${months}m`).textContent(),`${100+i*100} ⭐`);
-            assert.match(await page.evaluate(()=>tg.MainButton.text),/100 ⭐/);
+            for (const [i,months] of [1,3,6,12].entries()) assert.equal((await page.locator(`#price-${months}m`).textContent()).replace(/\s/g,''),['199,00₽','549,00₽','999,00₽','1799,00₽'][i]);
+            assert.equal(await page.evaluate(()=>tg.MainButton.text),'Оплатить');
             assert.equal(await page.evaluate(()=>tg.MainButton.active),true);
+            await page.evaluate(()=>openPaymentSheet());
+            assert.equal(await page.locator('#stars-price').textContent(),'100 ⭐');
+            assert.equal(scenario.requests.length,0);
             await page.context().close();
         });
         await check('off prevents requests and a client-side live override',async()=>{
@@ -79,7 +82,8 @@ async function main() {
             const page=await newPage();
             await page.evaluate(()=>paySelectedTariff());
             assert.equal(scenario.requests.length,0);
-            assert.equal(await page.evaluate(()=>tg.MainButton.active),false);
+            await page.evaluate(()=>openPaymentSheet());
+            assert.equal(await page.locator('#pay-stars').isDisabled(),true);
             await page.context().close();
         });
         await check('invoice includes exact quote, XTR and stable idempotency key; double click is ignored',async()=>{
@@ -155,7 +159,8 @@ async function main() {
             const key=scenario.requests[0].key;
             scenario.price=55;
             await page.evaluate(async()=>{await loadBootstrap(false);selectTariff(3);selectTariff(1)});
-            assert.match(await page.evaluate(()=>tg.MainButton.text),/100 ⭐/);
+            await page.evaluate(()=>openPaymentSheet());
+            assert.equal(await page.locator('#stars-price').textContent(),'100 ⭐');
             await page.reload();await page.waitForFunction(()=>userData?.id===7001);
             await page.evaluate(()=>{selectTariff(1);return paySelectedTariff()});
             assert.equal(scenario.requests[1].key,key);

@@ -27,6 +27,13 @@ let yookassaAttempts = {};
 let checkoutStatusText = "";
 let yookassaCheckBusy = false;
 let lastYookassaCheck = 0;
+const paymentSheetState = { open: false, revision: 0, timer: null, initialized: false, previousFocus: null, backgroundInert: false, backgroundLocked: false };
+let checkoutBotLink = null;
+let paymentOrderHistory = {};
+const paymentOrderChecks = new Map();
+let paymentRecoveryBatch = null;
+const paymentExpiryProbes = new Set();
+let paymentCountdownTimer = null;
 let currentGameSession = "";
 let serverOnline = false;
 
@@ -58,6 +65,9 @@ const adminUsersState = {
     legacyItems: null, loading: false, error: "", revision: 0, timer: null,
     controller: null, capabilities: {}
 };
+const adminVipPending = new Set();
+const adminVipVersions = new Map();
+const adminVipValues = new Map();
 let adminPanelInitialized = false;
 let mainButtonInitialized = false;
 let referralLink = "";
@@ -119,6 +129,16 @@ function applyBootstrap(data) {
             paymentAttempts = {};
             yookassaAttempts = {};
             checkoutStatusText = "";
+            checkoutBotLink = null;
+            paymentOrderHistory = {};
+            paymentExpiryProbes.clear();
+            try {
+                const saved = JSON.parse(localStorage.getItem(`sol-payment-history:${owner}`) || "{}");
+                for (const [id, record] of Object.entries(saved)) {
+                    if (record && checkoutUuid.test(record.orderId) && ["telegram_stars", "yookassa"].includes(record.provider)
+                        && [1, 3, 6, 12].includes(record.months)) paymentOrderHistory[id] = record;
+                }
+            } catch (_) {}
             try {
                 const saved = JSON.parse(localStorage.getItem(`sol-stars:${owner}`) || "{}");
                 for (const [months, attempt] of Object.entries(saved)) {
@@ -146,17 +166,12 @@ function applyBootstrap(data) {
     const rubProvider = data.payment?.providers?.yookassa;
     yookassaCatalog = rubProvider?.currency === "RUB" && Array.isArray(rubProvider.tariffs)
         ? rubProvider : { enabled: false, tariffs: [] };
-    const restored = new Set();
-    for (const order of data.payment?.pending_orders || []) {
-        const attempt = { months: order.months, amountKopecks: order.amount_kopecks,
-            discountPercent: order.discount_percent, key: order.request_id, orderId: order.order_id, status: order.status };
-        if (order.provider === "yookassa" && !restored.has(order.months) && validYookassaAttempt(order.months, attempt)) {
-            restored.add(order.months);
-            yookassaAttempts[order.months] = attempt;
-            if (!selectedMonths) selectedMonths = Number(order.months);
-        }
+    restorePaymentOrders(data.payment || {});
+    const selectedAttempt = yookassaAttempts[selectedMonths];
+    const botUsername = String(data.referral?.bot_username || "");
+    if (selectedAttempt?.deliveryState === "sent" && /^[a-zA-Z0-9_]{5,32}$/.test(botUsername)) {
+        checkoutBotLink = { orderId: selectedAttempt.orderId, url: `https://t.me/${botUsername}` };
     }
-    persistYookassaAttempts();
     if (Array.isArray(data.tariffs)) {
         data.tariffs.forEach(t => {
             tariffCatalog[Number(t.months)] = t;
@@ -166,6 +181,7 @@ function applyBootstrap(data) {
     }
     if (selectedMonths) selectTariff(selectedMonths);
     renderPaymentMethods();
+    renderPaymentCountdowns();
 
     if (data.referral) {
         currentRefPercent = Number(data.referral.percent ?? 5.0);
@@ -1060,6 +1076,189 @@ function persistYookassaAttempts() {
     try { localStorage.setItem(`sol-checkout:${paymentOwner}:yookassa`, JSON.stringify(yookassaAttempts)); } catch (_) {}
 }
 
+function paymentOrderKey(provider, orderId) { return `${provider}:${orderId}`; }
+function paymentProviderAttempts(provider) { return provider === "yookassa" ? yookassaAttempts : paymentAttempts; }
+function paymentOrderTerminal(attempt) { return ["paid", "refunded", "canceled", "error"].includes(attempt?.status); }
+function persistPaymentHistory() {
+    try { localStorage.setItem(`sol-payment-history:${paymentOwner}`, JSON.stringify(paymentOrderHistory)); } catch (_) {}
+}
+function syncPaymentExpiry(attempt, result) {
+    const expiry = Date.parse(result.expires_at || "");
+    const server = Date.parse(result.server_time || "");
+    if (Number.isFinite(expiry)) attempt.expiresAt = new Date(expiry).toISOString();
+    if (Number.isFinite(server)) attempt.serverOffsetMs = server - Date.now();
+    attempt.status = ["paid", "refunded"].includes(result.payment_status) ? result.payment_status : result.status || attempt.status;
+    if (result.created_at) attempt.createdAt = result.created_at;
+    if (attempt.status !== "expired" && paymentSecondsLeft(attempt) > 0) {
+        for (const provider of ["telegram_stars", "yookassa"]) paymentExpiryProbes.delete(paymentOrderKey(provider, attempt.orderId));
+    }
+}
+function paymentSecondsLeft(attempt) {
+    const expiry = Date.parse(attempt?.expiresAt || "");
+    return attempt?.orderId && Number.isFinite(expiry) ? Math.max(0, Math.ceil((expiry - Date.now() - Number(attempt.serverOffsetMs || 0)) / 1000)) : null;
+}
+function paymentOrderExpired(attempt) { return !paymentOrderTerminal(attempt) && (attempt?.status === "expired" || paymentSecondsLeft(attempt) === 0); }
+function rememberPaymentOrder(attempt, provider, archived = false) {
+    if (!attempt?.orderId || !checkoutUuid.test(attempt.orderId)) return;
+    const id = paymentOrderKey(provider, attempt.orderId);
+    const previous = paymentOrderHistory[id];
+    paymentOrderHistory[id] = { provider, orderId: attempt.orderId, months: attempt.months,
+        amount: attempt.amount, amountKopecks: attempt.amountKopecks, expiresAt: attempt.expiresAt,
+        serverOffsetMs: attempt.serverOffsetMs, status: attempt.status, createdAt: attempt.createdAt,
+        archived: archived || previous?.archived || false };
+    persistPaymentHistory();
+}
+function restorePaymentOrders(payment) {
+    const seen = new Set();
+    const rows = [...(Array.isArray(payment.pending_orders) ? payment.pending_orders : [])]
+        .sort((a, b) => Number(a.status === "expired") - Number(b.status === "expired"));
+    for (const order of rows) {
+        if (!["telegram_stars", "yookassa"].includes(order.provider) || !checkoutUuid.test(order.order_id)
+            || ![1, 3, 6, 12].includes(Number(order.months))) continue;
+        const provider = order.provider, months = Number(order.months), map = paymentProviderAttempts(provider);
+        const previous = map[months];
+        const attempt = { months, key: order.request_id, orderId: order.order_id, status: order.status,
+            discountPercent: order.discount_percent, ...(provider === "yookassa" ? { amountKopecks: order.amount_kopecks } : { amount: order.amount }),
+            deliveryState: order.checkout_delivery?.state || (previous?.orderId === order.order_id ? previous.deliveryState : undefined) };
+        syncPaymentExpiry(attempt, { ...order, server_time: order.server_time || payment.server_time });
+        const id = paymentOrderKey(provider, order.order_id), group = `${provider}:${months}`;
+        const archived = paymentOrderHistory[id]?.archived;
+        if (seen.has(group) || (archived && attempt.status === "expired")
+            || (previous?.orderId !== attempt.orderId && previous && !paymentOrderExpired(previous) && !paymentOrderTerminal(previous) && attempt.status === "expired")) {
+            rememberPaymentOrder(attempt, provider, true); continue;
+        }
+        const amount = provider === "yookassa" ? attempt.amountKopecks : attempt.amount;
+        if (!checkoutUuid.test(attempt.key) || !Number.isSafeInteger(amount) || amount < 1) { rememberPaymentOrder(attempt, provider, true); continue; }
+        if (previous?.orderId && previous.orderId !== attempt.orderId) rememberPaymentOrder(previous, provider, true);
+        map[months] = { ...(previous?.orderId === attempt.orderId ? previous : {}), ...attempt };
+        seen.add(group);
+        if (!selectedMonths) selectedMonths = months;
+        if (provider === "yookassa" && selectedMonths === months && safeCheckoutBotLink(order.checkout_delivery?.bot_url)) {
+            checkoutBotLink = { orderId: order.order_id, url: order.checkout_delivery.bot_url };
+        }
+    }
+    persistPaymentAttempts(); persistYookassaAttempts(); persistPaymentHistory();
+}
+function trackedPaymentOrders() {
+    const records = new Map(Object.entries(paymentOrderHistory));
+    for (const provider of ["telegram_stars", "yookassa"]) for (const attempt of Object.values(paymentProviderAttempts(provider))) {
+        if (attempt.orderId) records.set(paymentOrderKey(provider, attempt.orderId), { ...attempt, provider });
+    }
+    return [...records.values()].filter(record => checkoutUuid.test(record.orderId) && Number.isFinite(Date.parse(record.expiresAt || "")) && !paymentOrderTerminal(record))
+        .sort((a, b) => Number(paymentOrderExpired(a)) - Number(paymentOrderExpired(b)) || (Date.parse(b.createdAt || "") || 0) - (Date.parse(a.createdAt || "") || 0));
+}
+function renderPaymentCountdowns() {
+    const orders = trackedPaymentOrders();
+    const render = (container, rows, controls) => {
+        if (!container) return;
+        container.hidden = rows.length === 0;
+        const ids = new Set(rows.map(row => paymentOrderKey(row.provider, row.orderId)));
+        for (const node of [...container.children]) if (!ids.has(node.dataset.paymentOrder)) node.remove();
+        for (const order of rows) {
+            const id = paymentOrderKey(order.provider, order.orderId);
+            let row = [...container.children].find(node => node.dataset.paymentOrder === id);
+            if (!row) {
+                row = document.createElement("div"); row.className = "payment-deadline"; row.dataset.paymentOrder = id;
+                const label = document.createElement("span"); label.className = "payment-deadline-label";
+                const value = document.createElement("span"); value.className = "payment-deadline-value"; value.setAttribute("role", "timer"); value.setAttribute("aria-live", "off");
+                row.append(label, value);
+                if (controls) { const button = document.createElement("button"); button.type = "button"; button.className = "payment-deadline-check";
+                    button.dataset.action = "check-payment-order"; button.dataset.provider = order.provider; button.dataset.orderId = order.orderId;
+                    button.textContent = "Проверить оплату"; row.append(button); }
+                container.append(row);
+            }
+            const seconds = paymentSecondsLeft(order), expired = paymentOrderExpired(order);
+            row.classList.toggle("payment-deadline-warning", !expired && seconds !== null && seconds <= 60);
+            row.classList.toggle("payment-deadline-expired", expired);
+            row.querySelector(".payment-deadline-label").textContent = `${order.provider === "yookassa" ? "ЮKassa" : "Telegram Stars"} · ${order.months} мес.`;
+            row.querySelector(".payment-deadline-value").textContent = expired ? "Время оплаты истекло" : `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+            const button = row.querySelector("button"); if (button) button.disabled = paymentOrderChecks.has(id);
+        }
+    };
+    render(document.getElementById("profile-payment-deadlines"), orders, true);
+    render(document.getElementById("sheet-payment-deadlines"), orders.filter(row => row.months === selectedMonths), false);
+    for (const [provider, noteId] of [["telegram_stars", "stars-expired-note"], ["yookassa", "yookassa-expired-note"]]) {
+        const note = document.getElementById(noteId); if (note) note.hidden = !paymentOrderExpired(paymentProviderAttempts(provider)[selectedMonths]);
+    }
+    const held = document.getElementById("payment-discount-pending");
+    if (held) held.hidden = Number(tariffCatalog[selectedMonths]?.discount_percent || 0) > 0
+        || !(Array.isArray(paymentCatalog.discount_pending) ? paymentCatalog.discount_pending : []).some(row => Number(row.months) === selectedMonths);
+    if (orders.some(order => paymentSecondsLeft(order) > 0) && !paymentCountdownTimer) {
+        paymentCountdownTimer = setInterval(renderPaymentCountdowns, 1000);
+    } else if (!orders.some(order => paymentSecondsLeft(order) > 0) && paymentCountdownTimer) { clearInterval(paymentCountdownTimer); paymentCountdownTimer = null; }
+    for (const order of orders) if (paymentOrderExpired(order) && order.status !== "expired") {
+        const id = paymentOrderKey(order.provider, order.orderId);
+        if (!paymentExpiryProbes.has(id)) { paymentExpiryProbes.add(id); void checkPaymentOrder(order.provider, order.orderId, true); }
+    }
+}
+async function checkPaymentOrder(provider, orderId, quiet = false) {
+    if (!["telegram_stars", "yookassa"].includes(provider)) return null;
+    const id = paymentOrderKey(provider, orderId);
+    if (paymentOrderChecks.has(id)) return paymentOrderChecks.get(id);
+    const owner = paymentOwner;
+    const current = Object.values(paymentProviderAttempts(provider)).find(row => row.orderId === orderId);
+    const attempt = current || paymentOrderHistory[id];
+    if (!attempt || !checkoutUuid.test(orderId)) return null;
+    const pending = (async () => {
+        try {
+            const result = await apiFetch(`/api/payments/orders/${encodeURIComponent(orderId)}`);
+            if (paymentOwner !== owner || result.order_id !== orderId || (result.provider || result.channel) !== provider) return null;
+            const amount = provider === "yookassa" ? result.amount_kopecks : result.amount;
+            if (result.currency !== (provider === "yookassa" ? "RUB" : "XTR")
+                || amount !== (provider === "yookassa" ? attempt.amountKopecks : attempt.amount)) throw new Error("Параметры заказа требуют сверки");
+            syncPaymentExpiry(attempt, result);
+            if (provider === "yookassa" && current) syncCheckoutDelivery(attempt, result);
+            rememberPaymentOrder(attempt, provider, !current);
+            if (paymentOrderTerminal(attempt)) {
+                if (paymentProviderAttempts(provider)[attempt.months]?.orderId === orderId) delete paymentProviderAttempts(provider)[attempt.months];
+                if (attempt.status === "paid") { await loadBootstrap(false); if (!quiet) showToast("Оплата подтверждена сервером"); }
+            }
+            persistPaymentAttempts(); persistYookassaAttempts();
+            return result;
+        } catch (_) { if (!quiet) showToast("Не удалось проверить оплату. Повторите позже или напишите в /paysupport", "error"); return null; }
+        finally { paymentOrderChecks.delete(id); renderPaymentCountdowns(); renderPaymentMethods(); }
+    })();
+    paymentOrderChecks.set(id, pending); renderPaymentCountdowns(); return pending;
+}
+async function preparePaymentAttempt(provider, months) {
+    const map = paymentProviderAttempts(provider), attempt = map[months];
+    if (!attempt?.orderId || !paymentOrderExpired(attempt)) return true;
+    const result = await checkPaymentOrder(provider, attempt.orderId, true);
+    if (!result) { setCheckoutStatus(months, "Сначала проверьте прежний счёт. Новый счёт не создан."); return false; }
+    if (["paid", "refunded"].includes(result.status) || ["paid", "refunded"].includes(result.payment_status)) return false;
+    if (result.status !== "expired") return !paymentOrderExpired(map[months]);
+    rememberPaymentOrder(attempt, provider, true);
+    if (map[months]?.orderId === attempt.orderId) delete map[months];
+    persistPaymentAttempts(); persistYookassaAttempts();
+    await loadBootstrap(false);
+    const quote = provider === "yookassa" ? yookassaQuote(months) : paymentQuote(months);
+    const currentAmount = provider === "yookassa" ? quote?.amount_kopecks : quote?.amount;
+    if (currentAmount !== (provider === "yookassa" ? attempt.amountKopecks : attempt.amount)) {
+        setCheckoutStatus(months, "Прежний счёт истёк. Проверьте актуальную цену и нажмите способ оплаты для нового счёта.");
+        return false;
+    }
+    return true;
+}
+async function checkPendingPaymentOrders() {
+    const owner = paymentOwner;
+    if (paymentRecoveryBatch?.owner === owner) return paymentRecoveryBatch.promise;
+    const orders = trackedPaymentOrders();
+    const batch = { owner, promise: null };
+    let next = 0;
+    paymentRecoveryBatch = batch;
+    batch.promise = (async () => {
+        const worker = async () => {
+            while (next < orders.length && paymentOwner === owner) {
+                const order = orders[next++];
+                await checkPaymentOrder(order.provider, order.orderId, true);
+            }
+        };
+        try { await Promise.all(Array.from({ length: Math.min(3, orders.length) }, worker)); }
+        finally { if (paymentRecoveryBatch === batch) paymentRecoveryBatch = null; }
+    })();
+    return batch.promise;
+}
+
 function yookassaQuote(months) {
     const current = yookassaCatalog.tariffs?.find(item => Number(item.months) === Number(months));
     const attempt = yookassaAttempts[months];
@@ -1083,6 +1282,127 @@ function setCheckoutStatus(months, text) {
     if (selectedMonths === months) checkoutStatusText = text;
 }
 
+function paymentSheetReducedMotion() {
+    return Boolean(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);
+}
+
+function updatePaymentCta() {
+    const selected = Boolean(selectedMonths && tariffCatalog[selectedMonths]);
+    const active = selected && !paymentInProgress && !yookassaCheckBusy;
+    if (tg?.MainButton) {
+        tg.MainButton.setText("Оплатить");
+        tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: active, is_visible: selected && !paymentSheetState.open });
+        if (active) tg.MainButton.enable?.(); else tg.MainButton.disable?.();
+        if (selected && !paymentSheetState.open) tg.MainButton.show(); else tg.MainButton.hide();
+    }
+    const fallback = document.getElementById("payment-open-button");
+    if (fallback) { fallback.hidden = Boolean(tg?.MainButton) || !selected || paymentSheetState.open; fallback.disabled = !active; }
+}
+
+function openPaymentSheet() {
+    if (!selectedMonths || paymentInProgress || yookassaCheckBusy) return;
+    initPaymentSheet();
+    const backdrop = document.getElementById("payment-sheet-backdrop");
+    const panel = document.getElementById("payment-methods");
+    if (!backdrop || !panel) return;
+    const wasOpen = paymentSheetState.open;
+    if (!wasOpen && !backdrop.contains(document.activeElement)) paymentSheetState.previousFocus = document.activeElement;
+    paymentSheetState.revision++;
+    clearTimeout(paymentSheetState.timer);
+    paymentSheetState.open = true;
+    renderPaymentMethods();
+    backdrop.hidden = false;
+    panel.style.transform = "";
+    const background = document.querySelector(".app-container");
+    if (background) {
+        if (!paymentSheetState.backgroundLocked) paymentSheetState.backgroundInert = background.inert;
+        paymentSheetState.backgroundLocked = true;
+        background.inert = true;
+    }
+    void backdrop.offsetHeight;
+    backdrop.classList.add("is-open");
+    document.getElementById("payment-sheet-close")?.focus({ preventScroll: true });
+    tg?.BackButton?.show?.();
+    updatePaymentCta();
+}
+
+function closePaymentSheet() {
+    if (!paymentSheetState.open) return;
+    const backdrop = document.getElementById("payment-sheet-backdrop");
+    const panel = document.getElementById("payment-methods");
+    paymentSheetState.open = false;
+    const revision = ++paymentSheetState.revision;
+    backdrop?.classList.remove("is-open");
+    if (panel) { panel.style.transition = ""; panel.style.transform = ""; }
+    tg?.BackButton?.hide?.();
+    const finish = () => {
+        if (revision !== paymentSheetState.revision || paymentSheetState.open) return;
+        if (backdrop) backdrop.hidden = true;
+        const background = document.querySelector(".app-container");
+        if (background) background.inert = paymentSheetState.backgroundInert;
+        paymentSheetState.backgroundLocked = false;
+        const previous = paymentSheetState.previousFocus;
+        if (previous?.isConnected) previous.focus?.({ preventScroll: true });
+        updatePaymentCta();
+    };
+    clearTimeout(paymentSheetState.timer);
+    if (paymentSheetReducedMotion()) finish(); else paymentSheetState.timer = setTimeout(finish, 350);
+}
+
+function initPaymentSheet() {
+    if (paymentSheetState.initialized) return;
+    paymentSheetState.initialized = true;
+    tg?.BackButton?.onClick?.(closePaymentSheet);
+    document.addEventListener("keydown", event => {
+        if (!paymentSheetState.open) return;
+        if (event.key === "Escape") { event.preventDefault(); closePaymentSheet(); return; }
+        if (event.key !== "Tab") return;
+        const panel = document.getElementById("payment-methods");
+        const nodes = [...panel.querySelectorAll("button:not(:disabled), a[href], [tabindex='0']")].filter(node => node.getClientRects().length);
+        const first = nodes[0], last = nodes[nodes.length - 1];
+        if (!first) { event.preventDefault(); panel.focus(); }
+        else if (event.shiftKey && (document.activeElement === first || !panel.contains(document.activeElement))) { event.preventDefault(); last.focus(); }
+        else if (!event.shiftKey && (document.activeElement === last || !panel.contains(document.activeElement))) { event.preventDefault(); first.focus(); }
+    });
+    const grip = document.getElementById("payment-sheet-swipe");
+    const panel = document.getElementById("payment-methods");
+    let drag = null;
+    grip?.addEventListener("pointerdown", event => {
+        if (!paymentSheetState.open || event.button !== 0 || event.target.closest("button")) return;
+        drag = { id: event.pointerId, y: event.clientY, distance: 0 };
+        grip.setPointerCapture?.(event.pointerId);
+    });
+    grip?.addEventListener("pointermove", event => {
+        if (!drag || drag.id !== event.pointerId) return;
+        drag.distance = Math.max(0, event.clientY - drag.y);
+        panel.style.transition = "none";
+        panel.style.transform = `translateY(${drag.distance}px)`;
+    });
+    const endDrag = event => {
+        if (!drag || drag.id !== event.pointerId) return;
+        const close = drag.distance >= 70;
+        drag = null;
+        panel.style.transition = "";
+        panel.style.transform = "";
+        if (close) closePaymentSheet();
+    };
+    grip?.addEventListener("pointerup", endDrag);
+    grip?.addEventListener("pointercancel", event => { if (drag?.id === event.pointerId) { drag = null; panel.style.transition = ""; panel.style.transform = ""; } });
+}
+
+function safeCheckoutBotLink(value) {
+    if (!safeCheckoutLink(value)) return false;
+    const url = new URL(value);
+    return url.hostname === "t.me" && /^\/[a-zA-Z0-9_]{5,32}$/.test(url.pathname) && !url.search && !url.hash;
+}
+
+function syncCheckoutDelivery(attempt, result, missingState = null) {
+    const delivery = result.checkout_delivery || {};
+    if (["sent", "failed", "unknown", "pending", "unavailable"].includes(delivery.state)) attempt.deliveryState = delivery.state;
+    else if (missingState) attempt.deliveryState = missingState;
+    if (safeCheckoutBotLink(delivery.bot_url)) checkoutBotLink = { orderId: result.order_id, url: delivery.bot_url };
+}
+
 function renderPaymentMethods() {
     const panel = document.getElementById("payment-methods");
     if (!panel) return;
@@ -1092,37 +1412,57 @@ function renderPaymentMethods() {
     const pending = Boolean(attempt?.orderId && !["paid", "refunded", "canceled", "error"].includes(attempt.status));
     const rubAvailable = Boolean(yookassaCatalog.enabled && Number.isSafeInteger(rub?.amount_kopecks) && rub.amount_kopecks > 0 && rub.quote_token);
     const starsAvailable = Boolean(paymentCatalog.enabled && Number.isSafeInteger(stars?.amount) && stars.amount > 0);
-    panel.hidden = !selectedMonths || (!rubAvailable && !pending && !checkoutStatusText);
-    document.getElementById("payment-methods-title").textContent = `Оплата · ${selectedMonths || ""} мес.`;
+    const currentRub = yookassaCatalog.tariffs?.find(item => Number(item.months) === Number(selectedMonths));
+    const currentStars = paymentCatalog.tariffs?.find(item => Number(item.months) === Number(selectedMonths));
+    const rubSaved = Boolean(attempt && currentRub && attempt.amountKopecks !== currentRub.amount_kopecks);
+    const starsSaved = Boolean(paymentAttempts[selectedMonths] && currentStars && paymentAttempts[selectedMonths].amount !== currentStars.amount);
+    document.getElementById("yookassa-saved-note").hidden = !rubSaved;
+    document.getElementById("stars-saved-note").hidden = !starsSaved;
+    document.getElementById("payment-snapshot-note").hidden = !rubSaved && !starsSaved;
+    const monthTitle = ({ 1: "1 месяц", 3: "3 месяца", 6: "6 месяцев", 12: "12 месяцев" })[selectedMonths] || "";
+    document.getElementById("payment-tariff-title").textContent = `SOL VPN — ${monthTitle}`;
+    const tariff = tariffCatalog[selectedMonths];
+    document.getElementById("payment-cost-label").textContent = Number(tariff?.discount_percent) > 0 ? "Стоимость со скидкой:" : "Стоимость:";
+    document.getElementById("payment-cost").textContent = tariffPriceText(tariff);
     const rubButton = document.getElementById("pay-yookassa");
-    rubButton.hidden = !rubAvailable;
-    rubButton.disabled = paymentInProgress || yookassaCheckBusy || typeof tg?.openLink !== "function";
-    document.getElementById("yookassa-price").textContent = rublePrice(rub?.amount_kopecks);
+    rubButton.disabled = !rubAvailable || paymentInProgress || yookassaCheckBusy;
+    rubButton.dataset.available = String(rubAvailable);
+    document.getElementById("yookassa-price").textContent = rubAvailable ? rublePrice(rub.amount_kopecks) : "Сейчас недоступна";
     const starsButton = document.getElementById("pay-stars");
-    starsButton.hidden = !rubAvailable || !starsAvailable;
-    starsButton.disabled = paymentInProgress || yookassaCheckBusy;
-    document.getElementById("stars-price").textContent = starsAvailable ? `${stars.amount} ⭐` : "—";
+    starsButton.disabled = !starsAvailable || paymentInProgress || yookassaCheckBusy;
+    starsButton.dataset.available = String(starsAvailable);
+    document.getElementById("stars-price").textContent = starsAvailable ? `${stars.amount} ⭐` : "Сейчас недоступны";
     const checkButton = document.getElementById("check-yookassa");
     checkButton.hidden = !pending;
     checkButton.disabled = paymentInProgress || yookassaCheckBusy;
+    const fallback = document.getElementById("checkout-open-link");
+    fallback.hidden = !pending || !yookassaCatalog.enabled || attempt.deliveryState === "sent";
+    fallback.disabled = paymentInProgress || yookassaCheckBusy || typeof tg?.openLink !== "function";
+    const botButton = document.getElementById("checkout-open-bot");
+    botButton.hidden = !pending || attempt.deliveryState !== "sent" || checkoutBotLink?.orderId !== attempt.orderId || !safeCheckoutBotLink(checkoutBotLink.url);
+    botButton.disabled = paymentInProgress || yookassaCheckBusy;
     document.getElementById("checkout-status").textContent = checkoutStatusText
-        || (pending ? "Ожидание подтверждения ЮKassa. Перед новой покупкой проверьте оплату." : "Выберите способ оплаты");
+        || (pending ? "Ожидание подтверждения ЮKassa. Перед новой покупкой проверьте оплату." : "");
+    updatePaymentCta();
+    renderPaymentCountdowns();
 }
 
 async function payWithYookassa() {
     if (!selectedMonths || paymentInProgress || yookassaCheckBusy) return;
     const months = selectedMonths;
-    const quote = yookassaQuote(months);
+    let quote = yookassaQuote(months);
     if (!yookassaCatalog.enabled || !Number.isSafeInteger(quote?.amount_kopecks) || !quote?.quote_token) {
         showToast("ЮKassa сейчас недоступна", "error");
         return;
     }
-    if (typeof tg?.openLink !== "function") { showToast("Обновите Telegram для открытия оплаты", "error"); return; }
     paymentInProgress = true;
     setCheckoutStatus(months, "Подготавливаю счёт ЮKassa…");
     tg?.MainButton?.disable?.();
     renderPaymentMethods();
     try {
+        if (!await preparePaymentAttempt("yookassa", months)) return;
+        quote = yookassaQuote(months);
+        if (!yookassaCatalog.enabled || !quote?.quote_token) { setCheckoutStatus(months, "ЮKassa сейчас недоступна"); return; }
         let attempt = yookassaAttempts[months];
         if (!attempt || ["paid", "refunded", "canceled", "error"].includes(attempt.status)) {
             attempt = { months, amountKopecks: quote.amount_kopecks, discountPercent: Number(quote.discount_percent || 0),
@@ -1137,12 +1477,18 @@ async function payWithYookassa() {
             || !checkoutUuid.test(result.order_id)) throw new Error("Счёт не совпал с выбранной ценой. Обновите тарифы");
         attempt.orderId = result.order_id;
         attempt.status = result.status;
+        syncPaymentExpiry(attempt, result);
+        rememberPaymentOrder(attempt, "yookassa");
+        syncCheckoutDelivery(attempt, result, "unavailable");
         persistYookassaAttempts();
-        if (["paid", "refunded", "canceled", "error"].includes(result.status)) {
+        if (result.status === "expired") {
+            setCheckoutStatus(months, "Время оплаты истекло");
+        } else if (["paid", "refunded", "canceled", "error"].includes(result.status)) {
             await reconcileYookassaResult(months, result);
         } else if (["pending", "confirming"].includes(result.status) && safeCheckoutLink(result.confirmation_url)) {
-            setCheckoutStatus(months, "Ожидание подтверждения оплаты. После возвращения нажмите «Проверить оплату».");
-            tg.openLink(result.confirmation_url);
+            setCheckoutStatus(months, attempt.deliveryState === "sent"
+                ? "Бот отправил кнопку «Перейти к оплате». После оплаты проверьте подтверждение."
+                : "Доставка сообщения бота не подтверждена. Можно открыть страницу уже созданного заказа ниже.");
         } else if (result.status === "review") {
             setCheckoutStatus(months, "Платёж требует проверки. Напишите в /paysupport.");
         } else {
@@ -1161,11 +1507,39 @@ async function payWithYookassa() {
     }
 }
 
+async function openExistingCheckout() {
+    const months = selectedMonths;
+    const attempt = yookassaAttempts[months];
+    if (!attempt?.orderId || paymentInProgress || yookassaCheckBusy || typeof tg?.openLink !== "function") return;
+    const sheetRevision = paymentSheetState.open ? paymentSheetState.revision : null;
+    paymentInProgress = true;
+    renderPaymentMethods();
+    try {
+        const result = await apiFetch(`/api/payments/orders/${encodeURIComponent(attempt.orderId)}`);
+        await reconcileYookassaResult(months, result);
+        if (sheetRevision !== null && (!paymentSheetState.open || paymentSheetState.revision !== sheetRevision)) return;
+        if (["pending", "confirming"].includes(result.status) && safeCheckoutLink(result.confirmation_url)) tg.openLink(result.confirmation_url);
+        else if (["pending", "confirming"].includes(result.status)) setCheckoutStatus(months, "Ссылка ещё проверяется. Повторите проверку позже.");
+    } catch (_) {
+        setCheckoutStatus(months, "Не удалось проверить страницу оплаты. Повторите позже или напишите в /paysupport.");
+    } finally { paymentInProgress = false; renderPaymentMethods(); }
+}
+
+function openCheckoutBot() {
+    const attempt = yookassaAttempts[selectedMonths];
+    if (!attempt || checkoutBotLink?.orderId !== attempt.orderId || !safeCheckoutBotLink(checkoutBotLink.url)) return;
+    if (typeof tg?.openTelegramLink === "function") tg.openTelegramLink(checkoutBotLink.url);
+    else tg?.openLink?.(checkoutBotLink.url);
+}
+
 async function reconcileYookassaResult(months, result) {
     const attempt = yookassaAttempts[months];
     if (!attempt || result.provider !== "yookassa" || result.currency !== "RUB" || result.amount_kopecks !== attempt.amountKopecks
         || result.order_id !== attempt.orderId) throw new Error("Статус платежа требует сверки");
     attempt.status = result.status;
+    syncPaymentExpiry(attempt, result);
+    rememberPaymentOrder(attempt, "yookassa");
+    syncCheckoutDelivery(attempt, result);
     if (result.status === "paid") {
         delete yookassaAttempts[months];
         setCheckoutStatus(months, "Оплата подтверждена сервером. Подписка обновлена.");
@@ -1177,6 +1551,8 @@ async function reconcileYookassaResult(months, result) {
             : "Оплата не завершена. Можно выбрать способ оплаты снова.");
         persistYookassaAttempts();
         await loadBootstrap(false);
+    } else if (result.status === "expired") {
+        setCheckoutStatus(months, "Время оплаты истекло"); persistYookassaAttempts();
     } else {
         setCheckoutStatus(months, result.status === "review" ? "Платёж требует проверки в /paysupport." : "Ожидание подтверждения оплаты.");
         persistYookassaAttempts();
@@ -1205,12 +1581,8 @@ async function checkYookassaPayment(quiet = false) {
 
 function tariffPriceText(tariff) {
     if (!tariff) return "—";
-    const quote = paymentQuote(tariff.months);
-    if (paymentCatalog.enabled && Number.isSafeInteger(quote?.amount) && quote.amount > 0) return `${quote.amount} ⭐`;
-    if (tariff.price_rub !== undefined) return String(tariff.price_rub);
     const kopecks = Number(tariff.price_kopecks);
-    if (!Number.isInteger(kopecks)) return "—";
-    return `${Math.trunc(kopecks / 100)}.${String(kopecks % 100).padStart(2, "0")}`;
+    return rublePrice(kopecks);
 }
 
 function updateTariffPricesUI() {
@@ -1229,11 +1601,11 @@ function updateTariffPricesUI() {
         const tagEl = document.getElementById(`discount-tag-${months}m`);
         if (!tariff || !priceEl || !cardEl) return;
 
-        const discount = Number((paymentCatalog.enabled ? paymentQuote(months)?.discount_percent : tariff.discount_percent) || 0);
+        const discount = Number(tariff.discount_percent || 0);
         const shown = cardEl.classList.contains("show-card");
         const selected = Number(selectedMonths) === months;
         const price = tariffPriceText(tariff);
-        priceEl.innerText = price.includes("⭐") ? price : `${price} ₽`;
+        priceEl.innerText = price;
 
         cardEl.className = `${baseClasses[months]}${discount > 0 ? ` discounted-neon-${months}m` : ""}${shown ? " show-card" : ""}${selected ? " selected-tariff" : ""}`;
         if (tagEl) {
@@ -1258,7 +1630,46 @@ function updateTariffPricesUI() {
 // ==========================================
 // 👑 7. АДМИН-ПАНЕЛЬ
 // ==========================================
+function adminIcon(name) {
+    const shapes = {
+        crown: '<path d="m3 7 4 4 5-7 5 7 4-4-2 12H5L3 7Z"/><path d="M6 22h12"/>',
+        gift: '<rect x="3" y="8" width="18" height="5" rx="1"/><path d="M5 13v8h14v-8M12 8v13"/><path d="M12 8H8a3 3 0 1 1 3-3l1 3Zm0 0h4a3 3 0 1 0-3-3l-1 3Z"/>',
+        tag: '<path d="m3 12 9 9 9-9V3h-9L3 12Z"/><circle cx="16" cy="8" r="1"/>',
+        calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 11h18M8 15h2M14 15h2"/>',
+        users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.65"/>',
+        search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
+        profile: '<circle cx="12" cy="8" r="3"/><path d="M5 21a7 7 0 0 1 14 0M18 3h3v3M21 3l-5 5"/>',
+        message: '<path d="M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v9Z"/><path d="M7 8h10M7 12h7"/>',
+        send: '<path d="m22 2-7 20-4-9-9-4L22 2ZM11 13 22 2"/>',
+        check: '<path d="m4 12 5 5L20 6"/>',
+        warning: '<path d="M10.3 4a2 2 0 0 1 3.4 0l8 14a2 2 0 0 1-1.7 3H4a2 2 0 0 1-1.7-3l8-14Z"/><path d="M12 9v4M12 17h.01"/>',
+        close: '<path d="m6 6 12 12M18 6 6 18"/>',
+        plus: '<path d="M12 4v16M4 12h16"/>',
+        refresh: '<path d="M20 7V3l-4 4M4 17v4l4-4"/><path d="M20 7a9 9 0 0 0-15-2M4 17a9 9 0 0 0 15 2"/>'
+    };
+    return `<svg class="admin-neon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${shapes[name] || shapes.crown}</svg>`;
+}
+
+function initAdminIcons() {
+    document.querySelectorAll('[data-admin-icon]').forEach(slot => {
+        if (!slot.firstElementChild) slot.innerHTML = adminIcon(slot.dataset.adminIcon);
+    });
+}
+
+function showAdminToast(message, type = "info") {
+    showToast(message, type);
+    const toast = document.querySelector('#toast-container .toast:last-child');
+    if (!toast) return;
+    toast.classList.add("admin-toast");
+    const icon = document.createElement("span");
+    icon.innerHTML = adminIcon(type === "error" ? "warning" : "check");
+    const text = document.createElement("span");
+    text.textContent = message;
+    toast.replaceChildren(icon, text);
+}
+
 function initAdminPanel() {
+    initAdminIcons();
     const nav = document.getElementById("app-bottom-nav");
     const adminBtn = document.getElementById("btn-nav-4");
     if (!isAdmin) {
@@ -1418,8 +1829,8 @@ async function createAdminPromo() {
     const input = document.getElementById("admin-promo-name");
     if (!input) return;
     const code = input.value.trim().toUpperCase();
-    if (!code) return showToast("🚨 Введите название промокода", "error");
-    if (!adminPromoTypes.days && !adminPromoTypes.discount) return showToast("🚨 Выберите дни и/или скидку", "error");
+    if (!code) return showAdminToast("Введите название промокода", "error");
+    if (!adminPromoTypes.days && !adminPromoTypes.discount) return showAdminToast("Выберите дни и/или скидку", "error");
 
     const tariffs = Object.entries(adminPickedTariffs)
         .filter(([, picked]) => picked)
@@ -1440,16 +1851,17 @@ async function createAdminPromo() {
             })
         });
         input.value = "";
-        showToast(`🎉 Промокод ${result.code} сохранён`);
+        showAdminToast(`Промокод ${result.code} сохранён`);
         tg?.HapticFeedback?.notificationOccurred("success");
     } catch (error) {
-        showToast(`🚨 ${error.message}`, "error");
+        showAdminToast(error.message, "error");
     }
 }
 
 function renderApprovedUsersDrum() {
     const drum = document.getElementById("approved-users-drum");
     if (!drum) return;
+    const scrollTop = drum.parentElement.scrollTop;
     if (!approvedUsers.length) {
         drum.innerHTML = `<div class="empty-list-msg">Список одобренных пользователей пуст</div>`;
         return;
@@ -1457,12 +1869,14 @@ function renderApprovedUsersDrum() {
     drum.innerHTML = approvedUsers.map(user => `
         <div class="drum-item">
             <span>${escapeHtml(user.username || user.name || String(user.user_id))}</span>
-            <button class="remove-user-btn" type="button" data-action="remove-vip-user" data-user-id="${Number(user.user_id)}">✕</button>
+            <button class="remove-user-btn" type="button" data-action="remove-vip-user" data-user-id="${Number(user.user_id)}" aria-label="Снять назначенный VIP у пользователя ${Number(user.user_id)}" ${adminVipPending.has(Number(user.user_id)) || !adminVipSupported(user) || !user.vip_admin_granted ? 'disabled title="Для безопасного снятия VIP требуется обновление backend"' : ""}>${adminIcon("close")}</button>
         </div>
     `).join("");
+    drum.parentElement.scrollTop = scrollTop;
 }
 
 async function addApprovedUser() {
+    if (!isAdmin) return;
     const input = document.getElementById("admin-approved-input");
     const username = input?.value.trim();
     if (!username) return;
@@ -1471,27 +1885,114 @@ async function addApprovedUser() {
             method: "POST",
             body: JSON.stringify({ username })
         });
-        approvedUsers = result.admin.approved_users || [];
-        renderApprovedUsersDrum();
-        await loadAdminUsers(true);
+        applyAdminVipResult(result);
+        if (!adminVipSupported(result.target_user)) await loadAdminUsers(true);
         input.value = "";
-        showToast("⭐️ Пользователь добавлен в VIP");
+        showAdminToast("Пользователь добавлен в VIP");
     } catch (error) {
-        showToast(`🚨 ${error.message}`, "error");
+        showAdminToast(error.message, "error");
     }
 }
 
 async function removeApprovedUser(userId) {
+    userId = Number(userId);
+    if (!isAdmin || adminVipPending.has(userId)) return;
+    const assigned = approvedUsers.find(user => Number(user.user_id) === userId);
+    if (!adminVipSupported(assigned) || !assigned.vip_admin_granted) return adminActionStatus("Для безопасного снятия назначенного VIP требуется обновление backend.");
+    adminVipPending.add(userId);
+    adminVipVersions.set(userId, (adminVipVersions.get(userId) || 0) + 1);
+    updateAdminVipCard(userId);
     try {
         const result = await apiFetch("/api/admin/vip", {
             method: "DELETE",
             body: JSON.stringify({ user_id: Number(userId) })
         });
-        approvedUsers = result.admin.approved_users || [];
-        renderApprovedUsersDrum();
-        await loadAdminUsers(true);
+        if (!isAdmin) return;
+        applyAdminVipResult(result);
+        if (!adminVipSupported(result.target_user)) await loadAdminUsers(true);
     } catch (error) {
-        showToast(`🚨 ${error.message}`, "error");
+        showAdminToast(error.message, "error");
+    } finally {
+        adminVipPending.delete(userId);
+        adminVipVersions.set(userId, (adminVipVersions.get(userId) || 0) + 1);
+        updateAdminVipCard(userId);
+        renderApprovedUsersDrum();
+    }
+}
+
+function adminVipSupported(user) {
+    return typeof user?.vip_admin_granted === "boolean" && typeof user?.vip_protected === "boolean";
+}
+
+function adminVipSummary(user) {
+    return user.isVip ? `да${user.vip_admin_granted ? " · назначен администратором" : ""}` : "нет";
+}
+
+function updateAdminVipCard(userId) {
+    const user = allUsersList.find(item => Number(item.user_id) === userId);
+    const card = document.querySelector(`#all-users-container .user-row-card[data-user-id="${userId}"]`);
+    if (!user || !card || !isAdmin) return;
+    const button = card.querySelector('[data-action="toggle-admin-vip"]');
+    if (!button) return;
+    const pending = adminVipPending.has(userId);
+    button.disabled = pending || !adminVipSupported(user);
+    if (adminVipSupported(user)) button.removeAttribute("title");
+    button.setAttribute("aria-busy", String(pending));
+    button.setAttribute("aria-pressed", String(Boolean(user.vip_admin_granted)));
+    button.setAttribute("aria-label", `${user.vip_admin_granted ? "Снять назначенный" : "Назначить"} VIP пользователю ${userId}`);
+    button.classList.toggle("admin-vip-active", Boolean(user.vip_admin_granted));
+    const summary = card.querySelector('[data-admin-vip-summary]');
+    if (summary) summary.textContent = `VIP: ${adminVipSummary(user)}`;
+    const note = card.querySelector('.admin-vip-source-note');
+    if (note) note.hidden = !user.vip_protected;
+    const status = card.querySelector('.user-row-status');
+    if (status) {
+        status.textContent = user.hasSub ? "ПОДПИСКА АКТИВНА" : "НЕТ ПОДПИСКИ";
+        status.className = `user-row-status ${user.hasSub ? "sub-on" : "sub-off"}`;
+    }
+    card.classList.toggle("active-sub", Boolean(user.hasSub));
+}
+
+function applyAdminVipResult(result) {
+    if (!isAdmin) return;
+    if (Array.isArray(result.admin?.approved_users)) approvedUsers = result.admin.approved_users;
+    const target = result.target_user;
+    if (target && Number.isSafeInteger(Number(target.user_id)) && adminVipSupported(target)) {
+        const id = Number(target.user_id);
+        adminVipVersions.set(id, (adminVipVersions.get(id) || 0) + 1);
+        adminVipValues.set(id, Object.fromEntries(["isVip", "hasSub", "vip_admin_granted", "vip_protected"].map(key => [key, target[key]])));
+        allUsersList = allUsersList.map(user => Number(user.user_id) === id ? { ...user, ...target } : user);
+        if (adminUsersState.legacyItems) adminUsersState.legacyItems = adminUsersState.legacyItems.map(user => Number(user.user_id) === id ? { ...user, ...target } : user);
+        updateAdminVipCard(id);
+    }
+    renderApprovedUsersDrum();
+}
+
+async function toggleAdminVip(userId) {
+    userId = Number(userId);
+    if (!isAdmin || !Number.isSafeInteger(userId) || userId <= 0 || userId >= 2**52 || adminVipPending.has(userId)) return;
+    const user = allUsersList.find(item => Number(item.user_id) === userId);
+    if (!adminVipSupported(user)) return adminActionStatus("Для управления VIP по ID требуется обновление backend.");
+    const enabled = !user.vip_admin_granted;
+    adminVipValues.set(userId, Object.fromEntries(["isVip", "hasSub", "vip_admin_granted", "vip_protected"].map(key => [key, user[key]])));
+    adminVipPending.add(userId);
+    adminVipVersions.set(userId, (adminVipVersions.get(userId) || 0) + 1);
+    updateAdminVipCard(userId);
+    try {
+        const result = await apiFetch("/api/admin/vip", { method: "POST", body: JSON.stringify({ user_id: userId, enabled }) });
+        if (!isAdmin) return;
+        if (Number(result.target_user?.user_id) !== userId || !adminVipSupported(result.target_user)) throw new Error("Состояние VIP не подтверждено. Обновите список пользователей.");
+        applyAdminVipResult(result);
+        const protectedAccess = !enabled && result.target_user.vip_protected;
+        showAdminToast(enabled ? "VIP назначен" : protectedAccess ? "Назначенный VIP снят. Другое право VIP сохранено." : "Назначенный VIP снят");
+        if (result.sync_pending) adminActionStatus("VIP сохранён. Синхронизация VPN ещё выполняется.");
+    } catch (error) {
+        showAdminToast(error.message, "error");
+    } finally {
+        adminVipPending.delete(userId);
+        adminVipVersions.set(userId, (adminVipVersions.get(userId) || 0) + 1);
+        updateAdminVipCard(userId);
+        renderApprovedUsersDrum();
     }
 }
 
@@ -1518,6 +2019,7 @@ async function loadAdminUsers(reset = false) {
     clearTimeout(adminUsersState.timer);
     const query = (document.getElementById("admin-search-user")?.value || "").trim().toLocaleLowerCase("ru");
     const revision = ++adminUsersState.revision;
+    const vipVersions = new Map(adminVipVersions);
     adminUsersState.controller?.abort();
     adminUsersState.controller = new AbortController();
     if (reset) {
@@ -1553,7 +2055,14 @@ async function loadAdminUsers(reset = false) {
         }
         if (revision !== adminUsersState.revision || !isAdmin) return;
         const users = new Map(allUsersList.map(user => [String(user.user_id), user]));
-        rows.forEach(user => users.set(String(user.user_id), user));
+        rows.forEach(user => {
+            const id = Number(user.user_id);
+            const current = adminVipValues.get(id) || users.get(String(user.user_id));
+            if (current && (vipVersions.get(id) || 0) !== (adminVipVersions.get(id) || 0)) {
+                const vip = Object.fromEntries(["isVip", "hasSub", "vip_admin_granted", "vip_protected"].map(key => [key, current[key]]));
+                users.set(String(user.user_id), { ...user, ...vip });
+            } else users.set(String(user.user_id), user);
+        });
         allUsersList = Array.from(users.values());
         adminUsersState.total = Number.isSafeInteger(pagination.total) ? pagination.total : null;
         const nextOffset = Number(pagination.next_offset ?? adminUsersState.offset + rows.length);
@@ -1595,25 +2104,27 @@ function renderAllUsersList() {
                     <div class="user-row-status ${statusColor}">${statusTxt}</div>
                 </div>
                 <div class="user-profile-actions">
-                    <button type="button" class="user-profile-btn" data-action="open-admin-profile" data-user-id="${Number(u.user_id)}">Открыть профиль</button>
-                    <button type="button" class="user-profile-btn" data-action="contact-admin-user" data-user-id="${Number(u.user_id)}" aria-expanded="false">Связаться через бота</button>
+                    <button type="button" class="user-profile-btn" data-action="open-admin-profile" data-user-id="${Number(u.user_id)}">${adminIcon("profile")}<span>Открыть профиль</span></button>
+                    <button type="button" class="user-profile-btn" data-action="contact-admin-user" data-user-id="${Number(u.user_id)}" aria-expanded="false">${adminIcon("message")}<span>Связаться через бота</span></button>
+                    <button type="button" class="admin-vip-toggle ${u.vip_admin_granted ? "admin-vip-active" : ""}" data-action="toggle-admin-vip" data-user-id="${Number(u.user_id)}" aria-pressed="${Boolean(u.vip_admin_granted)}" aria-busy="${adminVipPending.has(Number(u.user_id))}" aria-label="${u.vip_admin_granted ? "Снять назначенный" : "Назначить"} VIP пользователю ${Number(u.user_id)}" aria-describedby="admin-vip-note-${Number(u.user_id)}" ${adminVipPending.has(Number(u.user_id)) || !adminVipSupported(u) ? "disabled" : ""} ${!adminVipSupported(u) ? 'title="Обновите backend для управления VIP по ID"' : ""}>${adminIcon("crown")}<span>VIP</span></button>
                 </div>
+                <p class="admin-vip-source-note" id="admin-vip-note-${Number(u.user_id)}" ${u.vip_protected ? "" : "hidden"}>Другое право VIP сохранится при снятии назначения администратора.</p>
                 <div class="admin-user-composer" hidden>
                     <label for="admin-message-${Number(u.user_id)}">Сообщение от поддержки SOL VPN</label>
                     <textarea id="admin-message-${Number(u.user_id)}" maxlength="3500" rows="3" placeholder="Текст сообщения"></textarea>
                     <p>Отправка возможна, если пользователь разрешил сообщения бота.</p>
-                    <button type="button" class="user-profile-btn" data-action="send-admin-message" data-user-id="${Number(u.user_id)}">Отправить сообщение</button>
+                    <button type="button" class="user-profile-btn" data-action="send-admin-message" data-user-id="${Number(u.user_id)}">${adminIcon("send")}<span>Отправить сообщение</span></button>
                 </div>
                 <div class="user-row-meta">
                     <span>ID: ${Number(u.user_id)}</span>
                     <span>Регистрация: ${escapeHtml(registered)}</span>
                     <span>Окончание: ${escapeHtml(subscriptionEnd)}</span>
-                    <span>VIP: ${u.isVip ? "да" : "нет"}</span>
+                    <span data-admin-vip-summary>VIP: ${adminVipSummary(u)}</span>
                     <span>VPN UUID: ${escapeHtml(vpnKey)}</span>
                     <span>Реферер: ${escapeHtml(referrer)}</span>
                 </div>
                 <div class="user-gift-drawer">
-                    <button class="gift-btn" type="button" data-action="gift-promo" data-user-id="${Number(u.user_id)}" data-username="${escapeHtml(u.username)}">🎁 ПОДАРИТЬ ПРОМОКОД</button>
+                    <button class="gift-btn" type="button" data-action="gift-promo" data-user-id="${Number(u.user_id)}" data-username="${escapeHtml(u.username)}">${adminIcon("gift")}<span>ПОДАРИТЬ ПРОМОКОД</span></button>
                 </div>
             </div>`;
     }).join("");
@@ -1633,14 +2144,19 @@ function renderAllUsersList() {
     if (more) {
         more.hidden = !isAdmin || (!adminUsersState.hasMore && !adminUsersState.error);
         more.disabled = adminUsersState.loading;
-        more.textContent = adminUsersState.error ? "Повторить загрузку" : "Показать ещё";
+        more.innerHTML = `${adminIcon(adminUsersState.error ? "refresh" : "users")}<span>${adminUsersState.error ? "Повторить загрузку" : "Показать ещё"}</span>`;
     }
 }
 
 function adminActionStatus(text) {
     const status = document.getElementById("admin-action-status");
     if (status) {
-        status.textContent = text;
+        status.replaceChildren();
+        if (text) {
+            const icon = document.createElement("span");
+            icon.innerHTML = adminIcon("message");
+            status.append(icon, document.createTextNode(text));
+        }
         status.scrollIntoView({ block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     }
 }
@@ -1702,9 +2218,9 @@ async function giftPromoToUser(userId, username) {
             method: "POST",
             body: JSON.stringify({ user_id: Number(userId), code: promoCode.trim().toUpperCase() })
         });
-        showToast(`🎁 Промокод отправлен ${username || userId}`);
+        showAdminToast(`Промокод отправлен ${username || userId}`);
     } catch (error) {
-        showToast(`🚨 ${error.message}`, "error");
+        showAdminToast(error.message, "error");
     }
 }
 
@@ -1726,7 +2242,8 @@ const faqAnswers = {
     5: "Перейдите в раздел «Игры», ловите кометы и получайте увеличение реферального процента и другие бонусы.",
     6: "Охота на кометы доступна только пользователям с активной подпиской SOL VPN. Приобрести подписку можно во вкладке «Кабинет».",
     7: "Дождитесь появления кометы в зоне действия радара. Нажмите мышкой или кликните пальцем по комете, чтобы поймать её.",
-    8: "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения."
+    8: "Да! VLESS-ключ совместим с компьютерами, смартфонами, роутерами и другими устройствами, поддерживающими соответствующий протокол и настройки подключения.",
+    9: "Мы нашли несколько сервисов, которые позволяют приобрести Telegram Stars. Сравните цены и выберите подходящий вариант."
 };
 
 // Tune the local replacement and the bounded left-to-right wave here.
@@ -1736,7 +2253,11 @@ const FAQ_ANIMATION = Object.freeze({
     maxWaveMs: 1200,
     overlapMs: 40,
     heightDurationMs: 420,
-    blurPx: 1.4
+    blurPx: 1.4,
+    actionRiseMs: 400,
+    actionStaggerMs: 120,
+    actionLeadMs: 180,
+    actionOffsetPx: 18
 });
 
 const faqState = {
@@ -1745,6 +2266,8 @@ const faqState = {
     targetText: defaultInfoText,
     revision: 0,
     animations: [],
+    actionAnimations: [],
+    targetActions: false,
     heightAnimation: null,
     heightTarget: 0,
     currentLayer: null,
@@ -1760,7 +2283,8 @@ function updateFaqHeight() {
     const viewport = document.getElementById("terminal-answer-viewport");
     const content = document.getElementById("terminal-text");
     if (!viewport || !content) return;
-    const height = Math.ceil((faqState.currentLayer || content).getBoundingClientRect().height);
+    const actions = document.getElementById("faq-answer-actions");
+    const height = Math.ceil((faqState.currentLayer || content).getBoundingClientRect().height + (actions?.hidden ? 0 : actions?.getBoundingClientRect().height || 0));
     if (height <= 0) return;
     if (faqState.heightAnimation) {
         if (height !== faqState.heightTarget) {
@@ -1832,6 +2356,13 @@ function cancelFaqAnimations() {
         animation.cancel();
     }
     faqState.animations = [];
+    for (const animation of faqState.actionAnimations) {
+        const row = animation.effect.target;
+        const style = getComputedStyle(row);
+        Object.assign(row.style, { opacity: style.opacity, transform: style.transform, filter: style.filter });
+        animation.cancel();
+    }
+    faqState.actionAnimations = [];
     const viewport = document.getElementById("terminal-answer-viewport");
     if (faqState.heightAnimation) {
         const height = viewport.getBoundingClientRect().height;
@@ -1880,18 +2411,127 @@ function animateFaqHeight(height, delay = 0) {
     faqState.heightAnimation.finished.catch(() => {});
 }
 
-async function animateDipText(newText) {
+function snapshotFaqActions() {
+    const viewport = document.getElementById("terminal-answer-viewport");
+    const container = document.getElementById("faq-answer-actions");
+    const origin = viewport.getBoundingClientRect();
+    const rows = Array.from(viewport.querySelectorAll(".faq-star-row"), row => ({
+        row, box: row.getBoundingClientRect(), opacity: getComputedStyle(row).opacity
+    })).filter(frame => Number(frame.opacity) > 0.01);
+    const outgoing = document.createElement("div");
+    outgoing.className = "faq-actions-outgoing";
+    outgoing.setAttribute("aria-hidden", "true");
+    rows.forEach(({ row, box, opacity }) => {
+        Object.assign(row.style, { position: "absolute", left: `${box.left - origin.left}px`, top: `${box.top - origin.top}px`,
+            width: `${box.width}px`, height: `${box.height}px`, margin: "0", opacity, transform: "none", filter: "none" });
+        row.querySelectorAll("a,button").forEach(control => { control.removeAttribute("href"); control.tabIndex = -1; control.disabled = true; });
+        outgoing.appendChild(row);
+    });
+    viewport.querySelectorAll(".faq-actions-outgoing").forEach(node => node.remove());
+    container.replaceChildren();
+    container.hidden = true;
+    if (rows.length) viewport.appendChild(outgoing);
+    return { outgoing, rows: rows.map(frame => frame.row) };
+}
+
+function renderFaqActions() {
+    const container = document.getElementById("faq-answer-actions");
+    const secondEnabled = window.SOL_FAQ_STARS_SECOND_ENABLED === true;
+    const urls = ["https://t.me/HelperStars_Robot?start=8544752152", "https://t.me/x10starsbot?start=8fee8aacda15d7c3"];
+    const rows = urls.map((url, index) => {
+        const row = document.createElement("div");
+        row.className = "faq-star-row";
+        const label = document.createElement("span");
+        label.textContent = `Вариант №${index + 1} —`;
+        const enabled = index === 0 || secondEnabled;
+        const link = document.createElement(enabled ? "a" : "button");
+        link.className = "faq-star-link";
+        link.textContent = "Перейти";
+        link.setAttribute("aria-label", `Вариант №${index + 1} — Перейти${enabled ? "" : ", временно недоступен"}`);
+        if (enabled) {
+            link.href = url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.addEventListener("click", event => {
+                if (faqState.selectedId !== 9 || !container.contains(row) || !faqState.targetActions) { event.preventDefault(); return; }
+                if (typeof tg?.openTelegramLink === "function") { event.preventDefault(); tg.openTelegramLink(url); }
+            });
+        } else { link.type = "button"; link.disabled = true; }
+        row.append(label, link);
+        container.appendChild(row);
+        return row;
+    });
+    const ad = window.SOL_FAQ_STARS_AD_INFO;
+    if (ad && [ad.advertiser, ad.erid, ad.detailsUrl].some(value => typeof value === "string" && value.trim())) {
+        const disclosure = document.createElement("details");
+        disclosure.className = "faq-ad-info";
+        const summary = document.createElement("summary");
+        summary.textContent = "Реклама · сведения";
+        disclosure.appendChild(summary);
+        for (const [key, title] of [["advertiser", "Рекламодатель"], ["erid", "erid"]]) {
+            if (typeof ad[key] !== "string" || !ad[key].trim()) continue;
+            const line = document.createElement("p");
+            line.textContent = `${title}: ${ad[key].trim().slice(0, 300)}`;
+            disclosure.appendChild(line);
+        }
+        try {
+            const url = new URL(ad.detailsUrl);
+            if (url.protocol === "https:" && !url.username && !url.password) {
+                const link = document.createElement("a");
+                Object.assign(link, { href: url.href, target: "_blank", rel: "noopener noreferrer", textContent: "Подробные сведения" });
+                disclosure.appendChild(link);
+            }
+        } catch (_) {}
+        disclosure.addEventListener("toggle", updateFaqHeight);
+        container.appendChild(disclosure);
+    }
+    container.hidden = false;
+    return rows;
+}
+
+async function revealFaqActions(revision, reducedMotion) {
+    const rows = renderFaqActions();
+    if (reducedMotion) { updateFaqHeight(); return; }
+    faqState.actionAnimations = rows.map((row, index) => row.animate([
+        { opacity: 0, transform: `translateY(${FAQ_ANIMATION.actionOffsetPx}px)`, filter: "blur(2px)" },
+        { opacity: 1, transform: "translateY(0)", filter: "blur(0px)" }
+    ], { duration: FAQ_ANIMATION.actionRiseMs, delay: FAQ_ANIMATION.actionLeadMs + index * FAQ_ANIMATION.actionStaggerMs,
+        easing: "cubic-bezier(0.22, 1, 0.36, 1)", fill: "both" }));
+    const target = Math.ceil(faqState.currentLayer.getBoundingClientRect().height + document.getElementById("faq-answer-actions").getBoundingClientRect().height);
+    animateFaqHeight(target);
+    await Promise.all(faqState.actionAnimations.map(animation => animation.finished.catch(() => {})));
+    if (revision !== faqState.revision) return;
+    while (faqState.heightAnimation) {
+        const current = faqState.heightAnimation;
+        await current.finished.catch(() => {});
+        if (revision !== faqState.revision) return;
+        if (current === faqState.heightAnimation) break;
+    }
+    cancelFaqAnimations();
+    rows.forEach(row => row.removeAttribute("style"));
+    document.getElementById("terminal-answer-viewport").classList.remove("faq-wave-active");
+    updateFaqHeight();
+}
+
+async function animateDipText(newText, withActions = false) {
     const revision = ++faqState.revision;
     faqState.targetText = newText;
+    faqState.targetActions = withActions;
     cancelFaqAnimations();
     const container = document.getElementById("terminal-text");
     const liveAnswer = document.getElementById("faq-answer-live");
     const reducedMotion = faqState.motionQuery?.matches || typeof container.animate !== "function";
     const viewport = document.getElementById("terminal-answer-viewport");
     liveAnswer.textContent = newText;
+    const previousActions = snapshotFaqActions();
     if (reducedMotion) {
-        viewport.classList.remove("faq-wave-active");
+        previousActions.outgoing.remove();
+        viewport.classList.add("faq-wave-active");
         renderFaqCharacters(newText);
+        if (withActions) await revealFaqActions(revision, true);
+        if (revision !== faqState.revision) return;
+        viewport.getBoundingClientRect();
+        viewport.classList.remove("faq-wave-active");
         return;
     }
 
@@ -1917,6 +2557,10 @@ async function animateDipText(newText) {
         { opacity: 1, transform: "scale(1)", filter: "blur(0px)" }
     ], { duration: enterDuration, delay: positionOf(glyph) * step + enterOffset, easing: "ease-out", fill: "both" })));
     faqState.animations = animations;
+    faqState.actionAnimations = previousActions.rows.map(row => row.animate([
+        { opacity: getComputedStyle(row).opacity, transform: "translateY(0)" },
+        { opacity: 0, transform: "translateY(8px)" }
+    ], { duration: 140, easing: "ease-out", fill: "both" }));
     const targetHeight = Math.ceil(incoming.getBoundingClientRect().height);
     // Keep the old last line until its wave has faded; expanding begins immediately.
     const shrinkDelay = targetHeight < viewport.getBoundingClientRect().height
@@ -1932,10 +2576,12 @@ async function animateDipText(newText) {
         if (heightAnimation === faqState.heightAnimation) break;
     }
     cancelFaqAnimations();
+    previousActions.outgoing.remove();
     container.replaceChildren(incoming);
     incoming.querySelectorAll(".faq-glyph").forEach(glyph => glyph.removeAttribute("style"));
     viewport.classList.remove("faq-wave-active");
     updateFaqHeight();
+    if (withActions) await revealFaqActions(revision, false);
 }
 
 function initInfoFAQ() {
@@ -1943,7 +2589,7 @@ function initInfoFAQ() {
         faqState.initialized = true;
         faqState.motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
         const onMotionChange = () => {
-            if (faqState.motionQuery.matches) animateDipText(faqState.targetText);
+            if (faqState.motionQuery.matches) animateDipText(faqState.targetText, faqState.targetActions);
         };
         if (faqState.motionQuery.addEventListener) {
             faqState.motionQuery.addEventListener("change", onMotionChange);
@@ -1954,22 +2600,31 @@ function initInfoFAQ() {
         if (typeof ResizeObserver === "function") {
             faqState.resizeObserver = new ResizeObserver(updateFaqHeight);
             faqState.resizeObserver.observe(document.getElementById("terminal-text"));
+            faqState.resizeObserver.observe(document.getElementById("faq-answer-actions"));
         } else {
             window.addEventListener("resize", updateFaqHeight);
         }
+        return;
     }
-    updateFaqHeight();
+    faqState.selectedId = null;
+    document.querySelectorAll("#screen-info .faq-btn").forEach(button => button.setAttribute("aria-pressed", "false"));
+    animateDipText(defaultInfoText);
+}
+
+function suspendInfoFAQ() {
+    ++faqState.revision;
+    cancelFaqAnimations();
 }
 
 function answerFAQ(id) {
     const text = faqAnswers[id];
     if (!text || id === faqState.selectedId) return;
-    initInfoFAQ();
+    if (!faqState.initialized) initInfoFAQ();
     faqState.selectedId = id;
     document.querySelectorAll("#screen-info .faq-btn").forEach(button => {
         button.setAttribute("aria-pressed", String(Number(button.dataset.faqId) === id));
     });
-    animateDipText(text);
+    animateDipText(text, id === 9);
     if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
@@ -2008,7 +2663,8 @@ function toggleTariffs(forceOpen = false) {
 async function paySelectedTariff() {
     if (!selectedMonths || paymentInProgress) return;
     const months = selectedMonths;
-    const quote = paymentQuote(months);
+    let quote = paymentQuote(months);
+    const sheetRevision = paymentSheetState.open ? paymentSheetState.revision : null;
     if (!paymentCatalog.enabled || !Number.isSafeInteger(quote?.amount) || quote.amount < 1) {
         showToast("Оплата Stars пока недоступна", "error");
         return;
@@ -2021,6 +2677,9 @@ async function paySelectedTariff() {
     tg?.MainButton?.disable?.();
     renderPaymentMethods();
     try {
+        if (!await preparePaymentAttempt("telegram_stars", months)) { paymentInProgress = false; selectTariff(selectedMonths); return; }
+        quote = paymentQuote(months);
+        if (!paymentCatalog.enabled || !Number.isSafeInteger(quote?.amount)) { paymentInProgress = false; selectTariff(selectedMonths); return; }
         // Reuse a request after a lost response; never trust the client to set its price.
         if (!paymentAttempts[months]) {
             paymentAttempts[months] = { months, amount: quote.amount,
@@ -2033,11 +2692,20 @@ async function paySelectedTariff() {
             headers: { "Idempotency-Key": attempt.key },
             body: JSON.stringify({ months, expected_currency: "XTR", expected_amount: quote.amount })
         });
-        if (result.currency !== "XTR" || result.amount !== quote.amount) throw new Error("Стоимость изменилась; обновите тарифы");
+        if (!checkoutUuid.test(result.order_id) || (attempt.orderId && attempt.orderId !== result.order_id)
+            || (result.provider || result.channel) !== "telegram_stars" || result.currency !== "XTR" || result.amount !== attempt.amount) {
+            throw new Error("Параметры счёта требуют сверки; обновите тарифы");
+        }
         attempt.orderId = result.order_id;
+        syncPaymentExpiry(attempt, result);
+        rememberPaymentOrder(attempt, "telegram_stars");
         persistPaymentAttempts();
+        renderPaymentCountdowns();
+        if (result.status === "expired") {
+            setCheckoutStatus(months, "Время оплаты истекло"); paymentInProgress = false; selectTariff(selectedMonths); return;
+        }
         if (result.status === "paid") {
-            delete paymentAttempts[months];
+            if (paymentAttempts[months]?.orderId === result.order_id) delete paymentAttempts[months];
             persistPaymentAttempts();
             paymentInProgress = false;
             await loadBootstrap(false);
@@ -2046,30 +2714,40 @@ async function paySelectedTariff() {
             return;
         }
         if (["refunded", "review", "error"].includes(result.status)) {
-            if (result.status === "refunded") { delete paymentAttempts[months]; persistPaymentAttempts(); }
+            if (result.status === "refunded") { if (paymentAttempts[months]?.orderId === result.order_id) delete paymentAttempts[months]; persistPaymentAttempts(); }
             throw new Error("Счёт закрыт или требует проверки. Обратитесь в /paysupport");
         }
         if (!result.invoice_url) throw new Error("Состояние счёта уточняется. Повторите попытку позже или обратитесь в /paysupport");
+        if (sheetRevision !== null && (!paymentSheetState.open || paymentSheetState.revision !== sheetRevision)) {
+            paymentInProgress = false;
+            selectTariff(selectedMonths);
+            return;
+        }
+        closePaymentSheet();
         tg.MainButton?.showProgress?.();
         tg.openInvoice(result.invoice_url, async status => {
             try {
                 if (status === "paid" || status === "pending") {
                     showToast("Проверяю оплату на сервере…");
-                    let verified = false;
-                    for (let attempt = 0; attempt < 8; attempt++) {
+                    let verified = false, expired = false;
+                    for (let poll = 0; poll < 8; poll++) {
                         const order = await apiFetch(`/api/payments/orders/${encodeURIComponent(result.order_id)}`);
+                        if (order.order_id !== result.order_id || (order.provider || order.channel) !== "telegram_stars"
+                            || order.currency !== "XTR" || order.amount !== attempt.amount) throw new Error("Параметры заказа требуют сверки");
+                        syncPaymentExpiry(attempt, order); rememberPaymentOrder(attempt, "telegram_stars");
                         if (order.status === "paid") {
                             await loadBootstrap(false);
                             showToast("✅ Сервер подтвердил оплату и обновил подписку");
-                            delete paymentAttempts[months];
+                            if (paymentAttempts[months]?.orderId === result.order_id) delete paymentAttempts[months];
                             persistPaymentAttempts();
                             verified = true;
                             break;
                         }
+                        if (order.status === "expired") { expired = true; break; }
                         if (["refunded", "review", "error"].includes(order.status)) break;
                         await new Promise(resolve => setTimeout(resolve, 750));
                     }
-                    if (!verified) showToast("Подтверждение ещё не получено. Проверьте позже или напишите /paysupport");
+                    if (!verified) showToast(expired ? "Время оплаты истекло" : "Подтверждение ещё не получено. Проверьте позже или напишите /paysupport");
                 } else if (status === "cancelled") {
                     showToast("Оплата отменена");
                 } else if (status === "failed") {
@@ -2079,6 +2757,7 @@ async function paySelectedTariff() {
                 showToast("Не удалось проверить оплату. Проверьте позже или напишите /paysupport", "error");
             } finally {
                 paymentInProgress = false;
+                persistPaymentAttempts();
                 tg.MainButton?.hideProgress?.();
                 selectTariff(selectedMonths);
             }
@@ -2104,22 +2783,12 @@ function selectTariff(months) {
     selectedMonths = months;
     updateTariffPricesUI();
 
-    const price = tariffPriceText(tariffCatalog[months]);
-    if (tg?.MainButton) {
-        const quote = paymentQuote(months);
-        const available = paymentCatalog.enabled && Number.isSafeInteger(quote?.amount) && quote.amount > 0;
-        tg.MainButton.setText(available ? `⭐ Оплатить ${months} мес. — ${price}` : "Оплата Stars пока недоступна");
-        tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: available && !paymentInProgress, is_visible: true });
-        if (available && !paymentInProgress) tg.MainButton.enable?.(); else tg.MainButton.disable?.();
-        const rub = yookassaQuote(months);
-        if (yookassaCatalog.enabled && Number.isSafeInteger(rub?.amount_kopecks) && rub?.quote_token) tg.MainButton.hide(); else tg.MainButton.show();
-    }
     renderPaymentMethods();
 }
 
 function initTelegramMainButton() {
     if (!tg?.MainButton || mainButtonInitialized) return;
-    tg.MainButton.onClick(paySelectedTariff);
+    tg.MainButton.onClick(openPaymentSheet);
     mainButtonInitialized = true;
 }
 
@@ -2132,6 +2801,7 @@ function initTelegramMainButton() {
 // 🧭 НАВИГАЦИЯ
 // ==========================================
 function switchNav(index, screenId) {
+    if (screenId !== "info" && faqState.initialized) suspendInfoFAQ();
     document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
     document.querySelectorAll(".nav-item").forEach(n => n.classList.remove("active"));
     
@@ -2211,9 +2881,16 @@ function initActionHandlers() {
                 case "use-referral-balance": useRefBalanceForTariff(); break;
                 case "toggle-tariffs": toggleTariffs(); break;
                 case "select-tariff": selectTariff(Number(target.dataset.months)); break;
+                case "open-payment-sheet": openPaymentSheet(); break;
+                case "close-payment-sheet":
+                    if (target.id !== "payment-sheet-backdrop" || event.target === target) closePaymentSheet();
+                    break;
                 case "pay-yookassa": await payWithYookassa(); break;
                 case "pay-stars": await paySelectedTariff(); break;
                 case "check-yookassa": await checkYookassaPayment(); break;
+                case "check-payment-order": await checkPaymentOrder(target.dataset.provider, target.dataset.orderId); break;
+                case "checkout-open-link": await openExistingCheckout(); break;
+                case "checkout-open-bot": openCheckoutBot(); break;
                 case "start-game": await startCatchGame(); break;
                 case "answer-faq": answerFAQ(Number(target.dataset.faqId)); break;
                 case "toggle-admin-promo-type": toggleAdminPromoType(target.dataset.type); break;
@@ -2223,6 +2900,7 @@ function initActionHandlers() {
                 case "create-admin-promo": await createAdminPromo(); break;
                 case "add-vip-user": await addApprovedUser(); break;
                 case "remove-vip-user": await removeApprovedUser(Number(target.dataset.userId)); break;
+                case "toggle-admin-vip": await toggleAdminVip(Number(target.dataset.userId)); break;
                 case "toggle-gift-drawer":
                     if (!event.target.closest("button, input, textarea, label")) toggleGiftDrawer(target);
                     break;
@@ -2239,7 +2917,8 @@ function initActionHandlers() {
             }
         } catch (error) {
             console.error(error);
-            showToast(`🚨 ${error.message || "Не удалось выполнить действие"}`, "error");
+            if (target.closest("#screen-admin")) showAdminToast(error.message || "Не удалось выполнить действие", "error");
+            else showToast(`🚨 ${error.message || "Не удалось выполнить действие"}`, "error");
         }
     });
 
@@ -2261,15 +2940,16 @@ window.addEventListener("load", async () => {
     updateConnectButtonState();
     alignNavBox(0);
     initTelegramMainButton();
+    initPaymentSheet();
 
     const data = await loadBootstrap(true);
-    if (data) await checkYookassaPayment(true);
+    if (data) { await checkYookassaPayment(true); await checkPendingPaymentOrders(); }
     if (!data) {
         showToast("Интерфейс загружен, но backend пока недоступен", "error");
     }
 });
 
-window.addEventListener("focus", () => { void checkYookassaPayment(true); });
+window.addEventListener("focus", () => { void checkPendingPaymentOrders(); });
 document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") void checkYookassaPayment(true);
+    if (document.visibilityState === "visible") void checkPendingPaymentOrders();
 });
