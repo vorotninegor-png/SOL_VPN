@@ -528,6 +528,20 @@ body {
 
 .tariffs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 10px 4px; }
 
+.payment-methods { margin: 18px 0 8px; padding: 16px; border: 1px solid rgba(168, 85, 247, .4); border-radius: 20px; background: rgba(15, 20, 38, .86); }
+.payment-methods[hidden], .payment-methods [hidden] { display: none !important; }
+.payment-methods h3 { margin: 0 0 14px; color: #fff; font-size: 16px; }
+.payment-method-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.payment-method { min-height: 86px; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; padding: 12px; border: 1px solid rgba(168, 85, 247, .5); border-radius: 14px; color: #fff; background: rgba(139, 92, 246, .16); cursor: pointer; text-align: left; }
+.payment-method-rub { border-color: rgba(59, 130, 246, .55); background: rgba(59, 130, 246, .12); }
+.payment-method span { font-size: 12px; color: #ded5fc; }
+.payment-method strong { font-size: 20px; white-space: nowrap; }
+.payment-method:disabled, .checkout-check:disabled { opacity: .55; cursor: wait; }
+.payment-method:focus-visible, .checkout-check:focus-visible { outline: 2px solid #e9d5ff; outline-offset: 3px; }
+.checkout-status { margin: 14px 0 0; font-size: 12px; line-height: 1.5; color: #cbd5e1; overflow-wrap: anywhere; }
+.checkout-check { width: 100%; min-height: 44px; margin-top: 12px; border: 1px solid rgba(168, 85, 247, .5); border-radius: 12px; color: #e9d5ff; background: rgba(139, 92, 246, .15); cursor: pointer; }
+@media (max-width: 359px) { .payment-method-buttons { grid-template-columns: minmax(0, 1fr); } }
+
 .tariff-card {
     position: relative; background: rgba(15, 20, 38, 0.6);
     backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.1);

@@ -8,6 +8,7 @@ node --check app.js
 node tests/info-faq.cjs
 node tests/admin-users.cjs
 node tests/stars-checkout.cjs
+node tests/payment-methods.cjs
 ```
 
 Для установленного Chrome задайте `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` — полный
@@ -28,6 +29,11 @@ node tests/stars-checkout.cjs
 `paid`. Все ответы и Telegram API подменены. Настоящие Stars не расходуются.
 Изменён только второй фрагмент ответа «Как ловить кометы?»; ожидаемый полный
 ответ закреплён в `info-faq.cjs`, остальные семь ответов и волна сохранены.
+
+`payment-methods.cjs` проверяет единый выбор тарифа, цены со скидкой из backend,
+прямой переход ЮKassa, сохранение и восстановление попытки, безопасный статус,
+409/ошибки/возвраты, Stars fallback и ширины 320/360/440/768 px. Все внешние
+вызовы подменены. `SOL_CHECKOUT_SCREENSHOT_DIR` сохраняет снимок панели 440 px.
 
 В проекте нет отдельной сборки и существующего тестового раннера.
 Админские проверки используют 125 искусственных пользователей: все страницы,

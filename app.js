@@ -22,6 +22,11 @@ let paymentInProgress = false;
 let paymentCatalog = { enabled: false, tariffs: [] };
 let paymentAttempts = {};
 let paymentOwner = null;
+let yookassaCatalog = { enabled: false, tariffs: [] };
+let yookassaAttempts = {};
+let checkoutStatusText = "";
+let yookassaCheckBusy = false;
+let lastYookassaCheck = 0;
 let currentGameSession = "";
 let serverOnline = false;
 
@@ -112,6 +117,8 @@ function applyBootstrap(data) {
         if (owner !== paymentOwner) {
             paymentOwner = owner;
             paymentAttempts = {};
+            yookassaAttempts = {};
+            checkoutStatusText = "";
             try {
                 const saved = JSON.parse(localStorage.getItem(`sol-stars:${owner}`) || "{}");
                 for (const [months, attempt] of Object.entries(saved)) {
@@ -120,6 +127,12 @@ function applyBootstrap(data) {
                         && /^[0-9a-f-]{36}$/i.test(attempt.key)) paymentAttempts[months] = attempt;
                 }
             } catch (_) { /* The current tab can still retry when storage is unavailable. */ }
+            try {
+                const saved = JSON.parse(localStorage.getItem(`sol-checkout:${owner}:yookassa`) || "{}");
+                for (const [months, attempt] of Object.entries(saved)) {
+                    if (validYookassaAttempt(months, attempt)) yookassaAttempts[months] = attempt;
+                }
+            } catch (_) {}
         }
     }
 
@@ -130,6 +143,20 @@ function applyBootstrap(data) {
 
     paymentCatalog = data.payment?.currency === "XTR" && data.payment?.channel === "telegram_stars"
         ? data.payment : { enabled: false, tariffs: [] };
+    const rubProvider = data.payment?.providers?.yookassa;
+    yookassaCatalog = rubProvider?.currency === "RUB" && Array.isArray(rubProvider.tariffs)
+        ? rubProvider : { enabled: false, tariffs: [] };
+    const restored = new Set();
+    for (const order of data.payment?.pending_orders || []) {
+        const attempt = { months: order.months, amountKopecks: order.amount_kopecks,
+            discountPercent: order.discount_percent, key: order.request_id, orderId: order.order_id, status: order.status };
+        if (order.provider === "yookassa" && !restored.has(order.months) && validYookassaAttempt(order.months, attempt)) {
+            restored.add(order.months);
+            yookassaAttempts[order.months] = attempt;
+            if (!selectedMonths) selectedMonths = Number(order.months);
+        }
+    }
+    persistYookassaAttempts();
     if (Array.isArray(data.tariffs)) {
         data.tariffs.forEach(t => {
             tariffCatalog[Number(t.months)] = t;
@@ -138,6 +165,7 @@ function applyBootstrap(data) {
         updateTariffPricesUI();
     }
     if (selectedMonths) selectTariff(selectedMonths);
+    renderPaymentMethods();
 
     if (data.referral) {
         currentRefPercent = Number(data.referral.percent ?? 5.0);
@@ -1020,6 +1048,161 @@ function newPaymentKey() {
     return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+const checkoutUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function validYookassaAttempt(months, attempt) {
+    return attempt && [1, 3, 6, 12].includes(Number(months)) && attempt.months === Number(months)
+        && Number.isSafeInteger(attempt.amountKopecks) && attempt.amountKopecks > 0
+        && checkoutUuid.test(attempt.key) && (!attempt.orderId || checkoutUuid.test(attempt.orderId));
+}
+
+function persistYookassaAttempts() {
+    try { localStorage.setItem(`sol-checkout:${paymentOwner}:yookassa`, JSON.stringify(yookassaAttempts)); } catch (_) {}
+}
+
+function yookassaQuote(months) {
+    const current = yookassaCatalog.tariffs?.find(item => Number(item.months) === Number(months));
+    const attempt = yookassaAttempts[months];
+    return current && attempt ? { ...current, amount_kopecks: attempt.amountKopecks, discount_percent: attempt.discountPercent } : current;
+}
+
+function rublePrice(kopecks) {
+    if (!Number.isSafeInteger(kopecks) || kopecks < 1) return "—";
+    return `${Math.trunc(kopecks / 100).toLocaleString("ru-RU")},${String(kopecks % 100).padStart(2, "0")} ₽`;
+}
+
+function safeCheckoutLink(value) {
+    if (typeof value !== "string" || value.length > 4096 || /[\x00-\x20\x7f]/.test(value)) return false;
+    try {
+        const url = new URL(value);
+        return url.protocol === "https:" && Boolean(url.hostname) && !url.username && !url.password && (!url.port || url.port === "443");
+    } catch (_) { return false; }
+}
+
+function setCheckoutStatus(months, text) {
+    if (selectedMonths === months) checkoutStatusText = text;
+}
+
+function renderPaymentMethods() {
+    const panel = document.getElementById("payment-methods");
+    if (!panel) return;
+    const rub = yookassaQuote(selectedMonths);
+    const stars = paymentQuote(selectedMonths);
+    const attempt = yookassaAttempts[selectedMonths];
+    const pending = Boolean(attempt?.orderId && !["paid", "refunded", "canceled", "error"].includes(attempt.status));
+    const rubAvailable = Boolean(yookassaCatalog.enabled && Number.isSafeInteger(rub?.amount_kopecks) && rub.amount_kopecks > 0 && rub.quote_token);
+    const starsAvailable = Boolean(paymentCatalog.enabled && Number.isSafeInteger(stars?.amount) && stars.amount > 0);
+    panel.hidden = !selectedMonths || (!rubAvailable && !pending && !checkoutStatusText);
+    document.getElementById("payment-methods-title").textContent = `Оплата · ${selectedMonths || ""} мес.`;
+    const rubButton = document.getElementById("pay-yookassa");
+    rubButton.hidden = !rubAvailable;
+    rubButton.disabled = paymentInProgress || yookassaCheckBusy || typeof tg?.openLink !== "function";
+    document.getElementById("yookassa-price").textContent = rublePrice(rub?.amount_kopecks);
+    const starsButton = document.getElementById("pay-stars");
+    starsButton.hidden = !rubAvailable || !starsAvailable;
+    starsButton.disabled = paymentInProgress || yookassaCheckBusy;
+    document.getElementById("stars-price").textContent = starsAvailable ? `${stars.amount} ⭐` : "—";
+    const checkButton = document.getElementById("check-yookassa");
+    checkButton.hidden = !pending;
+    checkButton.disabled = paymentInProgress || yookassaCheckBusy;
+    document.getElementById("checkout-status").textContent = checkoutStatusText
+        || (pending ? "Ожидание подтверждения ЮKassa. Перед новой покупкой проверьте оплату." : "Выберите способ оплаты");
+}
+
+async function payWithYookassa() {
+    if (!selectedMonths || paymentInProgress || yookassaCheckBusy) return;
+    const months = selectedMonths;
+    const quote = yookassaQuote(months);
+    if (!yookassaCatalog.enabled || !Number.isSafeInteger(quote?.amount_kopecks) || !quote?.quote_token) {
+        showToast("ЮKassa сейчас недоступна", "error");
+        return;
+    }
+    if (typeof tg?.openLink !== "function") { showToast("Обновите Telegram для открытия оплаты", "error"); return; }
+    paymentInProgress = true;
+    setCheckoutStatus(months, "Подготавливаю счёт ЮKassa…");
+    tg?.MainButton?.disable?.();
+    renderPaymentMethods();
+    try {
+        let attempt = yookassaAttempts[months];
+        if (!attempt || ["paid", "refunded", "canceled", "error"].includes(attempt.status)) {
+            attempt = { months, amountKopecks: quote.amount_kopecks, discountPercent: Number(quote.discount_percent || 0),
+                key: newPaymentKey(), orderId: null, status: "pending" };
+            yookassaAttempts[months] = attempt;
+            persistYookassaAttempts();
+        }
+        const result = await apiFetch("/api/payments/yookassa/order", { method: "POST",
+            headers: { "Idempotency-Key": attempt.key },
+            body: JSON.stringify({ months, expected_currency: "RUB", expected_amount: attempt.amountKopecks, quote_token: quote.quote_token }) });
+        if (result.provider !== "yookassa" || result.currency !== "RUB" || result.amount_kopecks !== attempt.amountKopecks
+            || !checkoutUuid.test(result.order_id)) throw new Error("Счёт не совпал с выбранной ценой. Обновите тарифы");
+        attempt.orderId = result.order_id;
+        attempt.status = result.status;
+        persistYookassaAttempts();
+        if (["paid", "refunded", "canceled", "error"].includes(result.status)) {
+            await reconcileYookassaResult(months, result);
+        } else if (["pending", "confirming"].includes(result.status) && safeCheckoutLink(result.confirmation_url)) {
+            setCheckoutStatus(months, "Ожидание подтверждения оплаты. После возвращения нажмите «Проверить оплату».");
+            tg.openLink(result.confirmation_url);
+        } else if (result.status === "review") {
+            setCheckoutStatus(months, "Платёж требует проверки. Напишите в /paysupport.");
+        } else {
+            setCheckoutStatus(months, "Ссылка оплаты ещё не подтверждена. Проверьте статус или напишите в /paysupport.");
+        }
+    } catch (error) {
+        if (error.status === 409 && /Стоимость|Повторный запрос/.test(error.message)) {
+            delete yookassaAttempts[months]; persistYookassaAttempts();
+        }
+        setCheckoutStatus(months, "Не удалось подтвердить создание счёта. Повторите тот же запрос или проверьте оплату.");
+        await loadBootstrap(false);
+        showToast(`Оплата: ${error.message}`, "error");
+    } finally {
+        paymentInProgress = false;
+        selectTariff(selectedMonths);
+    }
+}
+
+async function reconcileYookassaResult(months, result) {
+    const attempt = yookassaAttempts[months];
+    if (!attempt || result.provider !== "yookassa" || result.currency !== "RUB" || result.amount_kopecks !== attempt.amountKopecks
+        || result.order_id !== attempt.orderId) throw new Error("Статус платежа требует сверки");
+    attempt.status = result.status;
+    if (result.status === "paid") {
+        delete yookassaAttempts[months];
+        setCheckoutStatus(months, "Оплата подтверждена сервером. Подписка обновлена.");
+        persistYookassaAttempts();
+        await loadBootstrap(false);
+    } else if (["canceled", "error", "refunded"].includes(result.status)) {
+        delete yookassaAttempts[months];
+        setCheckoutStatus(months, result.status === "refunded" ? "Возврат подтверждён. По подписке обратитесь в /paysupport."
+            : "Оплата не завершена. Можно выбрать способ оплаты снова.");
+        persistYookassaAttempts();
+        await loadBootstrap(false);
+    } else {
+        setCheckoutStatus(months, result.status === "review" ? "Платёж требует проверки в /paysupport." : "Ожидание подтверждения оплаты.");
+        persistYookassaAttempts();
+    }
+    renderPaymentMethods();
+}
+
+async function checkYookassaPayment(quiet = false) {
+    const months = selectedMonths;
+    const attempt = yookassaAttempts[months];
+    if (!attempt?.orderId || paymentInProgress || yookassaCheckBusy || (quiet && Date.now() - lastYookassaCheck < 2000)) return;
+    yookassaCheckBusy = true;
+    lastYookassaCheck = Date.now();
+    setCheckoutStatus(months, "Проверяю оплату на сервере…");
+    renderPaymentMethods();
+    try {
+        const result = await apiFetch(`/api/payments/orders/${encodeURIComponent(attempt.orderId)}`);
+        await reconcileYookassaResult(months, result);
+    } catch (_) {
+        setCheckoutStatus(months, "Статус временно недоступен. Повторите проверку или напишите в /paysupport.");
+    } finally {
+        yookassaCheckBusy = false;
+        renderPaymentMethods();
+    }
+}
+
 function tariffPriceText(tariff) {
     if (!tariff) return "—";
     const quote = paymentQuote(tariff.months);
@@ -1836,6 +2019,7 @@ async function paySelectedTariff() {
     }
     paymentInProgress = true;
     tg?.MainButton?.disable?.();
+    renderPaymentMethods();
     try {
         // Reuse a request after a lost response; never trust the client to set its price.
         if (!paymentAttempts[months]) {
@@ -1915,6 +2099,8 @@ async function paySelectedTariff() {
 function selectTariff(months) {
     months = Number(months);
     if (!tariffCatalog[months]) return;
+    if (paymentInProgress && selectedMonths !== months) return;
+    if (selectedMonths !== months) checkoutStatusText = "";
     selectedMonths = months;
     updateTariffPricesUI();
 
@@ -1925,8 +2111,10 @@ function selectTariff(months) {
         tg.MainButton.setText(available ? `⭐ Оплатить ${months} мес. — ${price}` : "Оплата Stars пока недоступна");
         tg.MainButton.setParams?.({ color: "#8b5cf6", text_color: "#ffffff", is_active: available && !paymentInProgress, is_visible: true });
         if (available && !paymentInProgress) tg.MainButton.enable?.(); else tg.MainButton.disable?.();
-        tg.MainButton.show();
+        const rub = yookassaQuote(months);
+        if (yookassaCatalog.enabled && Number.isSafeInteger(rub?.amount_kopecks) && rub?.quote_token) tg.MainButton.hide(); else tg.MainButton.show();
     }
+    renderPaymentMethods();
 }
 
 function initTelegramMainButton() {
@@ -2023,6 +2211,9 @@ function initActionHandlers() {
                 case "use-referral-balance": useRefBalanceForTariff(); break;
                 case "toggle-tariffs": toggleTariffs(); break;
                 case "select-tariff": selectTariff(Number(target.dataset.months)); break;
+                case "pay-yookassa": await payWithYookassa(); break;
+                case "pay-stars": await paySelectedTariff(); break;
+                case "check-yookassa": await checkYookassaPayment(); break;
                 case "start-game": await startCatchGame(); break;
                 case "answer-faq": answerFAQ(Number(target.dataset.faqId)); break;
                 case "toggle-admin-promo-type": toggleAdminPromoType(target.dataset.type); break;
@@ -2072,7 +2263,13 @@ window.addEventListener("load", async () => {
     initTelegramMainButton();
 
     const data = await loadBootstrap(true);
+    if (data) await checkYookassaPayment(true);
     if (!data) {
         showToast("Интерфейс загружен, но backend пока недоступен", "error");
     }
+});
+
+window.addEventListener("focus", () => { void checkYookassaPayment(true); });
+document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void checkYookassaPayment(true);
 });
