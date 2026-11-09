@@ -42,7 +42,7 @@ async function fixture(){
         }
         if(name.startsWith('/api/'))return json(res,{detail:'not found'},404);
         const file=name==='/'?'index.html':name.slice(1);
-        if(!['index.html','style.css','appearance.css','appearance.js','app.js','config.js'].includes(file))return res.writeHead(404).end();
+        if(!['index.html','style.css','appearance.css','miniapp-ui.css','appearance.js','miniapp-ui.js','app.js','config.js'].includes(file))return res.writeHead(404).end();
         res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
     });
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;

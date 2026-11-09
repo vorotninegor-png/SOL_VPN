@@ -2,6 +2,7 @@ const assert=require('node:assert/strict');
 const fs=require('node:fs/promises');
 const path=require('node:path');
 const {fixture}=require('./browser-fixture.cjs');
+async function choose(page, selector, value){await page.locator(selector).click();await page.locator(`[data-choice-value="${value}"]`).click();}
 async function main(){const f=await fixture();let checks=0;const test=async(name,fn)=>{await fn();checks++;console.log(`PASS ${name}`)};
 const saved=(settings,presets=[])=>({version:1,settings,presets});
 try{
@@ -9,7 +10,7 @@ try{
  await test('all six themes and Classic Light apply real app tokens immediately',async()=>{
   assert.equal(await page.locator('[data-appearance-theme]').count(),6);
   for(const name of ['cosmic','classic','ocean','aurora','solar','matrix']){await page.locator(`[data-appearance-theme="${name}"]`).click();assert.equal(await page.evaluate(()=>document.documentElement.dataset.theme),name);}
-  await page.locator('[data-appearance-theme="classic"]').click();await page.locator('[data-appearance-setting="classicMode"]').selectOption('light');
+  await page.locator('[data-appearance-theme="classic"]').click();await choose(page,'[data-appearance-setting="classicMode"]','light');
   assert.equal(await page.evaluate(()=>getComputedStyle(document.body).color),'rgb(23, 35, 56)');assert.equal(await page.evaluate(()=>document.documentElement.style.colorScheme),'light');
  });
  await test('stars, gradients, surfaces, button shape, glow and response update actual UI',async()=>{
@@ -78,11 +79,11 @@ try{
   assert.equal(await page.locator('#admin-promo-name').evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(223, 230, 238)');
  });
  await test('three random modes work through settings and preset saves do not disable startup mode',async()=>{
-  await page.evaluate(()=>switchNav(1,'settings'));await page.locator('#appearance-mode').selectOption('generated');
-  assert.equal(await page.evaluate(()=>SolAppearance.snapshot().settings.randomOnLaunch),false);assert.equal(await page.locator('#appearance-mode').inputValue(),'generated');
-  await page.locator('#appearance-mode').selectOption('startup');assert.equal(await page.evaluate(()=>SolAppearance.snapshot().settings.randomOnLaunch),true);
+  await page.evaluate(()=>switchNav(1,'settings'));await choose(page,'#appearance-mode','generated');
+  assert.equal(await page.evaluate(()=>SolAppearance.snapshot().settings.randomOnLaunch),false);assert.equal(await page.locator('#appearance-mode').evaluate(el=>el.value),'generated');
+  await choose(page,'#appearance-mode','startup');assert.equal(await page.evaluate(()=>SolAppearance.snapshot().settings.randomOnLaunch),true);
   await page.locator('#appearance-preset-name').fill('В режиме запуска');await page.locator('#appearance-save').click();assert.equal(await page.evaluate(()=>SolAppearance.snapshot().settings.randomOnLaunch),true);
-  await page.locator('#appearance-mode').selectOption('fixed');assert.equal(await page.evaluate(()=>SolAppearance.snapshot().settings.randomOnLaunch),false);
+  await choose(page,'#appearance-mode','fixed');assert.equal(await page.evaluate(()=>SolAppearance.snapshot().settings.randomOnLaunch),false);
  });
  await test('blocked or invalid local storage cannot break controls or leak another user preferences',async()=>{
   const p=await f.page({blockedStorage:true});await p.evaluate(()=>{SolAppearance.update({theme:'solar'});SolAppearance.setUser(7002)});assert.equal(await p.evaluate(()=>SolAppearance.snapshot().settings.theme),'cosmic');

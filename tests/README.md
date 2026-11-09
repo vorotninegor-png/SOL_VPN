@@ -7,6 +7,7 @@
 ```sh
 node --check app.js
 node --check appearance.js
+node --check miniapp-ui.js
 node tests/appearance.cjs
 node tests/payment-cleanup.cjs
 node tests/payment-methods.cjs
@@ -14,6 +15,7 @@ node tests/stars-checkout.cjs
 node tests/payment-expiry.cjs
 node tests/admin-users.cjs
 node tests/info-faq.cjs
+node tests/miniapp-ui.cjs
 ```
 
 Все тесты поднимают временный локальный HTTP API, подменяют Telegram SDK
@@ -29,8 +31,9 @@ node tests/info-faq.cjs
 | payment-expiry | 12 | исходный TTL, clock skew, reload, amber60, новый счёт по явному действию, holds/новая цена, identity guards, queue concurrency3 |
 | admin-users | 19 | поиск/пагинация, VIP по ID, защищённые права, profile/message, черновики/scroll, старый API, обычный пользователь |
 | info-faq | 20 | 9 ответов, один Helper Stars, wave/Liquid Rise, reset, resize/высота, reduced motion, disclosure, touch/keyboard/Unicode |
+| miniapp-ui | 21 | SVG во всех экранах и динамических сообщениях, сохранение ⭐/₽, морфинг стрелок без rotation, отмена раскрытий, все диалоги настроек, ARIA/клавиатура/фокус, 320–1024 px, 330 px с клавиатурой, reduced motion в процессе, старый WebView, weak device, отсутствие финансовых POST |
 
-Всего — **111 проверок**. Браузерные JavaScript errors также проверяются.
+Всего — **132 проверки**. Браузерные JavaScript errors также проверяются.
 Пять прежних suites адаптированы под новое требование очищать временный UI:
 после cancel нужна повторная явная выборка тарифа; старый expired не остаётся
 видимой карточкой, а незавершённые финансовые ID сохраняются для сверки.
@@ -47,6 +50,7 @@ node tests/info-faq.cjs
 - SOL_CHECKOUT_SCREENSHOT_DIR — sheet 440 px.
 - SOL_FAQ_SCREENSHOT_DIR — FAQ и Helper Stars 320/390 px.
 - SOL_ADMIN_SCREENSHOT_DIR — эффективный VIP/белые SVG.
+- SOL_UI_SCREENSHOT_DIR — шесть тем, SVG навигации, админка, диалоги 320/390 px и промежуточные кадры переходов.
 
 Тексты восьми исходных ответов FAQ сохранены; новый короткий ответ Helper Stars
 закреплён отдельно. Волна: локальная смена280 ms, шаг12 ms, max1200 ms,

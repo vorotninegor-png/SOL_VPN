@@ -233,7 +233,7 @@ async function loadBootstrap(showErrors = true) {
         isSubscribedUser = false;
         updateConnectButtonState();
         checkGameLockStatus();
-        if (showErrors) showToast(`⚠️ Backend: ${error.message}`, "error");
+        if (showErrors) showToast(`Backend: ${error.message}`, "error");
         if (!userData) window.SolAppearance?.setUser(null);
         console.error(error);
         return null;
@@ -246,7 +246,7 @@ function updateSubscriptionUI(subscription) {
     if (!leftVal || !bar) return;
 
     if (subscription.is_vip) {
-        leftVal.innerText = "👑 VIP · безлимит";
+        window.SolUI.text(leftVal, "VIP · безлимит", "crown");
         bar.style.width = "100%";
         return;
     }
@@ -285,7 +285,8 @@ function showToast(message, type = "info") {
 
     const toast = document.createElement("div");
     toast.className = `toast ${type}`;
-    toast.innerText = message;
+    toast.setAttribute("role", type === "error" ? "alert" : "status");
+    window.SolUI.text(toast, message, type === "error" ? "warning" : "info");
 
     container.appendChild(toast);
 
@@ -460,11 +461,11 @@ const telemetryBar = document.getElementById("telemetry-bar");
 if (connectBtn) {
     connectBtn.addEventListener("click", async () => {
         if (!serverOnline) {
-            showToast("⚠️ Нет связи с backend на вашем ПК", "error");
+            showToast("Нет связи с backend на вашем ПК", "error");
             return;
         }
         if (!isSubscribedUser) {
-            showToast("🔒 Для получения VPN активируйте подписку", "error");
+            showToast("Для получения VPN активируйте подписку", "error");
             tg?.HapticFeedback?.notificationOccurred("error");
             return;
         }
@@ -499,7 +500,7 @@ async function connectVPN() {
     } catch (error) {
         statusText.innerText = "ОШИБКА";
         statusBadge.className = "status-badge disconnected";
-        showToast(`🚨 VPN: ${error.message}`, "error");
+        showToast(`VPN: ${error.message}`, "error");
         tg?.HapticFeedback?.notificationOccurred("error");
     }
 }
@@ -582,7 +583,7 @@ async function copyVlessKey() {
     }
     try {
         await navigator.clipboard.writeText(currentVlessUri);
-        showToast("🔑 VLESS-ключ скопирован");
+        showToast("VLESS-ключ скопирован");
         tg?.HapticFeedback?.notificationOccurred("success");
     } catch (_) {
         // В некоторых WebView clipboard запрещён — показываем стандартный Telegram popup.
@@ -623,6 +624,9 @@ function togglePromoCard(forceState = null) {
         if (promoCardTrigger) promoCardTrigger.classList.remove("active-card");
         resetPromoStyles();
     }
+    window.SolUI.disclosure(promoCardTrigger, isPromoOpen);
+    if (!isPromoOpen && drawer?.contains(document.activeElement)) promoCardTrigger?.focus();
+    if (drawer) drawer.inert = !isPromoOpen;
     if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
@@ -642,7 +646,7 @@ function resetPromoStyles() {
     if (btn) btn.className = "apply-promo-btn";
     if (headerText) {
         headerText.style.color = "#c084fc";
-        headerText.innerText = "🎁 ВВЕДИТЕ ПРОМОКОД";
+        window.SolUI.text(headerText, "ВВЕДИТЕ ПРОМОКОД", "gift");
     }
 }
 
@@ -670,7 +674,7 @@ async function applyPromoCode() {
         if (card) card.className = "promo-card-box success-glow";
         if (inputField) inputField.className = "success-border";
         if (headerText) {
-            headerText.innerText = "🎉 УСПЕШНО!";
+            window.SolUI.text(headerText, "УСПЕШНО!", "check");
             headerText.style.color = "#10b981";
         }
         if (statusMsg) {
@@ -678,7 +682,7 @@ async function applyPromoCode() {
             statusMsg.className = "promo-status-msg show-msg success-txt";
         }
         applyBootstrap(result.bootstrap);
-        showToast(result.message || `🎉 Промокод ${code} активирован`);
+        showToast(result.message || `Промокод ${code} активирован`);
         tg?.HapticFeedback?.notificationOccurred("success");
         setTimeout(() => {
             inputField.value = "";
@@ -691,7 +695,7 @@ async function applyPromoCode() {
             statusMsg.innerText = "ОШИБКА";
             statusMsg.className = "promo-status-msg show-msg error-txt";
         }
-        showToast(`🚨 ${error.message}`, "error");
+        showToast(`${error.message}`, "error");
         tg?.HapticFeedback?.notificationOccurred("error");
     } finally {
         btn?.removeAttribute("disabled");
@@ -716,6 +720,9 @@ function toggleRefCard(forceState = null) {
         if (drawer) drawer.classList.add("hidden-drawer");
         if (refCardTrigger) refCardTrigger.classList.remove("active-card");
     }
+    window.SolUI.disclosure(refCardTrigger, isRefOpen);
+    if (!isRefOpen && drawer?.contains(document.activeElement)) refCardTrigger?.focus();
+    if (drawer) drawer.inert = !isRefOpen;
     if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
@@ -732,7 +739,7 @@ async function copyRefLinkDirect() {
     }
     try {
         await navigator.clipboard.writeText(field.value);
-        showToast("🚀 Реферальная ссылка скопирована!");
+        showToast("Реферальная ссылка скопирована!");
         tg?.HapticFeedback?.notificationOccurred("success");
     } catch (_) {
         window.prompt("Скопируйте реферальную ссылку:", field.value);
@@ -756,7 +763,7 @@ function updateRefUI() {
     if (payBtn) {
         payBtn.classList.add("disabled-btn");
         payBtn.disabled = true;
-        payBtn.innerText = "💳 ОПЛАТА БАЛАНСОМ ПОКА НЕДОСТУПНА";
+        window.SolUI.text(payBtn, "ОПЛАТА БАЛАНСОМ ПОКА НЕДОСТУПНА", "card");
     }
 }
 
@@ -775,11 +782,11 @@ function checkGameLockStatus() {
 async function startCatchGame() {
     if (isGameRunning) return;
     if (!isSubscribedUser) {
-        showToast("🔒 Нужна активная подписка", "error");
+        showToast("Нужна активная подписка", "error");
         return;
     }
     if (!isScanAvailable && !isAdmin) {
-        showToast("🚨 Лимит сканирования исчерпан (24ч)", "error");
+        showToast("Лимит сканирования исчерпан (24ч)", "error");
         return;
     }
 
@@ -788,7 +795,7 @@ async function startCatchGame() {
         session = await apiFetch("/api/game/start", { method: "POST", body: "{}" });
         currentGameSession = session.session_id;
     } catch (error) {
-        showToast(`🚨 Игра: ${error.message}`, "error");
+        showToast(`Игра: ${error.message}`, "error");
         return;
     }
 
@@ -976,7 +983,7 @@ async function determineLoot(x, y, slot, randColor) {
         let prizeHTML = "";
 
         if (reward.type === "discount") {
-            createFloatingText(x, y, `🔥 -${reward.value}%!`, "green-text");
+            createFloatingText(x, y, `-${reward.value}%!`, "green-text");
             prizeHTML = `<span style="color:${randColor};font-weight:bold">-${reward.value}%</span>`;
             setTimeout(() => spinSpaceSlot(reward.value, Number(reward.months)), 200);
         } else if (reward.type === "ref_plus") {
@@ -994,7 +1001,7 @@ async function determineLoot(x, y, slot, randColor) {
         applyBootstrap(result.bootstrap);
     } catch (error) {
         slot.innerHTML = `<div class="loot-surprise-node"><span style="color:#ef4444">ERR</span></div>`;
-        showToast(`🚨 Награда: ${error.message}`, "error");
+        showToast(`Награда: ${error.message}`, "error");
     }
 }
 
@@ -1021,7 +1028,7 @@ function spinSpaceSlot(discountValue, targetSegment) {
         const color = neons[targetSegment] || "#a855f7";
         slotContainer.style.borderColor = color;
         slotContainer.style.boxShadow = `0 0 35px ${color}, inset 0 0 15px ${color}`;
-        showToast(`🔥 Скидка ${discountValue}% на тариф ${targetSegment} мес.`);
+        showToast(`Скидка ${discountValue}% на тариф ${targetSegment} мес.`);
         setTimeout(() => {
             slotContainer.style.borderColor = "rgba(255,255,255,0.2)";
             slotContainer.style.boxShadow = "0 8px 25px rgba(0,0,0,0.5), inset 0 0 12px rgba(255,255,255,0.08)";
@@ -1036,7 +1043,7 @@ function createFloatingText(x, y, text, cssClass) {
     el.className = `floating-drop-text ${cssClass}`;
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
-    el.innerText = text;
+    window.SolUI.text(el, text);
     stage.appendChild(el);
     setTimeout(() => el.remove(), 1200);
 }
@@ -1528,8 +1535,8 @@ function renderPaymentMethods() {
     const botButton = document.getElementById("checkout-open-bot");
     botButton.hidden = !pending || attempt.deliveryState !== "sent" || checkoutBotLink?.orderId !== attempt.orderId || !safeCheckoutBotLink(checkoutBotLink.url);
     botButton.disabled = paymentInProgress || yookassaCheckBusy;
-    document.getElementById("checkout-status").textContent = checkoutStatusText
-        || (pending ? "Ожидание подтверждения ЮKassa. Перед новой покупкой проверьте оплату." : "");
+    window.SolUI.text(document.getElementById("checkout-status"), checkoutStatusText
+        || (pending ? "Ожидание подтверждения ЮKassa. Перед новой покупкой проверьте оплату." : ""));
     updatePaymentCta();
     renderPaymentCountdowns();
 }
@@ -1658,7 +1665,7 @@ function updateTariffPricesUI() {
         cardEl.className = `${baseClasses[months]}${discount > 0 ? ` discounted-neon-${months}m` : ""}${shown ? " show-card" : ""}${selected ? " selected-tariff" : ""}`;
         if (tagEl) {
             if (discount > 0) {
-                tagEl.innerText = `🔥 -${discount}%`;
+                window.SolUI.text(tagEl, `-${discount}%`, "tag");
                 tagEl.style.color = neons[months];
                 tagEl.style.textShadow = `0 0 8px ${neons[months]}`;
                 tagEl.className = "tariff-discount-tag show-tag";
@@ -1679,23 +1686,7 @@ function updateTariffPricesUI() {
 // 👑 7. АДМИН-ПАНЕЛЬ
 // ==========================================
 function adminIcon(name) {
-    const shapes = {
-        crown: '<path d="m3 7 4 4 5-7 5 7 4-4-2 12H5L3 7Z"/><path d="M6 22h12"/>',
-        gift: '<rect x="3" y="8" width="18" height="5" rx="1"/><path d="M5 13v8h14v-8M12 8v13"/><path d="M12 8H8a3 3 0 1 1 3-3l1 3Zm0 0h4a3 3 0 1 0-3-3l-1 3Z"/>',
-        tag: '<path d="m3 12 9 9 9-9V3h-9L3 12Z"/><circle cx="16" cy="8" r="1"/>',
-        calendar: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 11h18M8 15h2M14 15h2"/>',
-        users: '<circle cx="9" cy="8" r="3"/><path d="M3 21v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M21 21v-2a6 6 0 0 0-4-5.65"/>',
-        search: '<circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/>',
-        profile: '<circle cx="12" cy="8" r="3"/><path d="M5 21a7 7 0 0 1 14 0M18 3h3v3M21 3l-5 5"/>',
-        message: '<path d="M21 15a3 3 0 0 1-3 3H8l-5 3V6a3 3 0 0 1 3-3h12a3 3 0 0 1 3 3v9Z"/><path d="M7 8h10M7 12h7"/>',
-        send: '<path d="m22 2-7 20-4-9-9-4L22 2ZM11 13 22 2"/>',
-        check: '<path d="m4 12 5 5L20 6"/>',
-        warning: '<path d="M10.3 4a2 2 0 0 1 3.4 0l8 14a2 2 0 0 1-1.7 3H4a2 2 0 0 1-1.7-3l8-14Z"/><path d="M12 9v4M12 17h.01"/>',
-        close: '<path d="m6 6 12 12M18 6 6 18"/>',
-        plus: '<path d="M12 4v16M4 12h16"/>',
-        refresh: '<path d="M20 7V3l-4 4M4 17v4l4-4"/><path d="M20 7a9 9 0 0 0-15-2M4 17a9 9 0 0 0 15 2"/>'
-    };
-    return `<svg class="admin-neon-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">${shapes[name] || shapes.crown}</svg>`;
+    return window.SolUI.icon(name, "admin-neon-icon");
 }
 
 function initAdminIcons() {
@@ -1712,7 +1703,7 @@ function showAdminToast(message, type = "info") {
     const icon = document.createElement("span");
     icon.innerHTML = adminIcon(type === "error" ? "warning" : "check");
     const text = document.createElement("span");
-    text.textContent = message;
+    window.SolUI.text(text, message);
     toast.replaceChildren(icon, text);
 }
 
@@ -1971,7 +1962,7 @@ async function loadVipDirectory(force = false) {
         vipDirectory.users = found;
         if(status) status.textContent = vipDirectory.complete ? `Действующих VIP: ${found.size}` : "Полнота VIP-списка не подтверждена старым API.";
     } catch(error) {
-        if(error.name!=="AbortError" && revision===vipDirectory.revision && status) status.textContent = `${error.message} Нажмите «Обновить VIP-список».`;
+        if(error.name!=="AbortError" && revision===vipDirectory.revision && status) window.SolUI.text(status, `${error.message} Нажмите «Обновить VIP-список».`);
     } finally {
         if(revision===vipDirectory.revision) { vipDirectory.loading=false; renderApprovedUsersDrum(); }
     }
@@ -2241,8 +2232,8 @@ function renderAllUsersList() {
     if (!allUsersList.length && isAdmin) container.innerHTML = `<div class="empty-list-msg">${adminUsersState.loading ? "Загрузка пользователей…" : "Пользователи не найдены"}</div>`;
     container.scrollTop = scrollTop;
     const status = document.getElementById("admin-users-status");
-    if (status) status.textContent = !isAdmin ? "" : adminUsersState.error || (adminUsersState.loading ? "Загрузка…" :
-        `Показано ${allUsersList.length}${adminUsersState.total === null ? "" : ` из ${adminUsersState.total}`}${adminUsersState.legacyItems ? ". API без пагинации: полнота списка не подтверждена." : ""}`);
+    if (status) window.SolUI.text(status, !isAdmin ? "" : adminUsersState.error || (adminUsersState.loading ? "Загрузка…" :
+        `Показано ${allUsersList.length}${adminUsersState.total === null ? "" : ` из ${adminUsersState.total}`}${adminUsersState.legacyItems ? ". API без пагинации: полнота списка не подтверждена." : ""}`));
     const more = document.getElementById("admin-users-more");
     if (more) {
         more.hidden = !isAdmin || (!adminUsersState.hasMore && !adminUsersState.error);
@@ -2258,7 +2249,9 @@ function adminActionStatus(text) {
         if (text) {
             const icon = document.createElement("span");
             icon.innerHTML = adminIcon("message");
-            status.append(icon, document.createTextNode(text));
+            const label = document.createElement("span");
+            window.SolUI.text(label, text);
+            status.append(icon, label);
         }
         status.scrollIntoView({ block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     }
@@ -2569,7 +2562,9 @@ function renderFaqActions() {
                 disclosure.appendChild(link);
             }
         } catch (_) {}
+        window.SolUI.enhanceDetails(disclosure);
         disclosure.addEventListener("toggle", updateFaqHeight);
+        disclosure.addEventListener("sol:disclosure-settled", updateFaqHeight);
         container.appendChild(disclosure);
     }
     container.hidden = false;
@@ -2729,21 +2724,18 @@ function toggleTariffs(forceOpen = false) {
         isTariffsOpen = !isTariffsOpen;
     }
 
+    window.SolUI.disclosure(document.getElementById("tariffs-toggle-btn"), isTariffsOpen);
+    flowContainer.inert = !isTariffsOpen;
     if (isTariffsOpen) {
         if (isPromoOpen) togglePromoCard(false);
         if (isRefOpen) toggleRefCard(false);
-        
-        flowContainer.classList.remove("hidden-flow");
-        cards.forEach((card, index) => {
-            setTimeout(() => { if (card) card.classList.add("show-card"); }, index * 90);
-        });
-    } else {
-        const reversedCards = Array.from(cards).reverse();
-        reversedCards.forEach((card, index) => {
-            setTimeout(() => { if (card) card.classList.remove("show-card"); }, index * 70);
-        });
-        setTimeout(() => { flowContainer.classList.add("hidden-flow"); }, cards.length * 70 + 200);
     }
+    // CSS delays are cancellable on rapid reversal; no stale timeouts can hide a reopened section.
+    flowContainer.classList.toggle("hidden-flow", !isTariffsOpen);
+    cards.forEach((card,index)=>{
+        card.style.setProperty("--reveal-delay", `${(isTariffsOpen?index:cards.length-1-index)*45}ms`);
+        card.classList.toggle("show-card", isTariffsOpen);
+    });
     if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred("light");
 }
 
@@ -2847,6 +2839,7 @@ function initTelegramMainButton() {
 // 🧭 НАВИГАЦИЯ
 // ==========================================
 function switchNav(index, screenId) {
+    window.SolUI.closeChoice(true);
     if (screenId !== "settings" && !paymentSheetState.open) tg?.BackButton?.hide?.();
     if (screenId !== "info" && faqState.initialized) suspendInfoFAQ();
     document.querySelectorAll(".screen").forEach(s => s.classList.remove("active"));
@@ -2968,7 +2961,7 @@ function initActionHandlers() {
         } catch (error) {
             console.error(error);
             if (target.closest("#screen-admin")) showAdminToast(error.message || "Не удалось выполнить действие", "error");
-            else showToast(`🚨 ${error.message || "Не удалось выполнить действие"}`, "error");
+            else showToast(`${error.message || "Не удалось выполнить действие"}`, "error");
         }
     });
 
@@ -2982,6 +2975,7 @@ function initActionHandlers() {
 // ==========================================
 window.addEventListener("load", async () => {
     initActionHandlers();
+    window.SolUI.init();
     initSpaceFX();
     initMap3D();
     fillReelCards();
@@ -2992,7 +2986,7 @@ window.addEventListener("load", async () => {
     initTelegramMainButton();
     initPaymentSheet();
     window.SolAppearance?.init();
-    tg?.BackButton?.onClick?.(() => { if (!paymentSheetState.open && document.getElementById("screen-settings")?.classList.contains("active")) switchNav(1,"profile"); });
+    tg?.BackButton?.onClick?.(() => { if(window.SolUI.closeChoice())return; if (!paymentSheetState.open && document.getElementById("screen-settings")?.classList.contains("active")) switchNav(1,"profile"); });
 
     const data = await loadBootstrap(true);
     if (data) { await checkYookassaPayment(true); await checkPendingPaymentOrders(); }
@@ -3008,4 +3002,9 @@ document.addEventListener("visibilitychange", () => {
 document.addEventListener("sol:appearance-change", event => {
     if (event.detail?.paletteTransition !== false) updatePaymentCta();
     if (faqState.initialized && document.getElementById("screen-info")?.classList.contains("active") && window.SolAppearance?.animationsAllowed() === false) void animateDipText(faqState.targetText,faqState.targetActions);
+});
+
+document.addEventListener("keydown", event => {
+    const card=event.target.closest('.action-card[role="button"]');
+    if(card && (event.key==='Enter' || event.key===' ')){event.preventDefault();card.click();}
 });

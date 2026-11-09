@@ -26,7 +26,7 @@
     const safeOwner = value => /^\d{1,16}$/.test(String(value || "")) && Number(value) > 0 && Number(value) < 2**52 ? String(value) : null;
     const key = () => owner ? `sol-appearance:v1:${owner}` : null;
     const allowed = () => state.animations && !motionQuery?.matches;
-    const duration = () => ({ slow: 700, normal: 500, fast: 350 })[state.speed];
+    const duration = () => ({ slow: 740, normal: 560, fast: 380 })[state.speed];
     function normalize(value) {
         const result = { ...defaults };
         if (!value || typeof value !== "object" || Array.isArray(value)) return result;
@@ -56,6 +56,7 @@
     function setUser(value) {
         const nextOwner = safeOwner(value);
         if (owner === nextOwner) { root.dataset.appearanceReady = "true"; return; }
+        window.SolUI?.closeChoice(true);
         owner = nextOwner; state = { ...defaults }; presets = [];
         let saved;
         let raw=key()&&memory.get(key());
@@ -72,6 +73,8 @@
         commit(false); renderPresets(); root.dataset.appearanceReady = "true";
     }
     function commit(animate = true, origin, paletteTransition = true) {
+        // Theme snapshots must not retain the outgoing settings dialog/backdrop.
+        if (paletteTransition) window.SolUI?.closeChoice(true);
         const revision = ++transitionRevision;
         transition?.skipTransition?.(); clearTimeout(cleanupTimer);
         const mode = animate && allowed() ? paletteTransition ? state.transition : "smooth" : "none";
@@ -141,6 +144,11 @@
         });
         const classic=document.getElementById("appearance-classic");if(classic)classic.hidden=state.theme!=="classic";
         const mode=document.getElementById("appearance-mode");if(mode)mode.value=state.randomOnLaunch?"startup":state.randomMode==="generated"?"generated":"fixed";
+        document.querySelectorAll('[data-appearance-choice]').forEach(button=>{
+            const config=settingChoices.get(button.dataset.appearanceChoice);
+            const value=button.dataset.appearanceChoice==='randomMode' ? (state.randomOnLaunch?'startup':state.randomMode==='generated'?'generated':'fixed') : state[button.dataset.appearanceChoice];
+            button.value=value;button.querySelector('[data-choice-label]').textContent=config.options.find(row=>row[0]===value)?.[1] || value;
+        });
         renderStatus();
     }
     function renderPresets() {
@@ -152,9 +160,13 @@
             const remove=document.createElement("button");remove.type="button";remove.textContent="Удалить";remove.dataset.appearanceDelete=preset.id;remove.setAttribute("aria-label",`Удалить оформление ${preset.name}`);row.append(button,remove);list.append(row);}
         const count=document.getElementById("appearance-preset-count");if(count)count.textContent=`${presets.length} / 20`;
     }
+    const settingChoices=new Map();
     function buildSettings() {
         const target=document.getElementById("appearance-controls");if(!target)return;
-        const select=(name,title,options)=>`<label class="appearance-row"><span>${title}</span><select data-appearance-setting="${name}" aria-label="${title}">${options.map(([value,label])=>`<option value="${value}">${label}</option>`).join("")}</select></label>`;
+        const select=(name,title,options)=>{
+            settingChoices.set(name,{title,options});
+            return `<div class="appearance-row"><span>${title}</span><button type="button" class="appearance-choice" ${name==='randomMode'?'id="appearance-mode"':`data-appearance-setting="${name}"`} data-appearance-choice="${name}" aria-label="${title}" aria-describedby="appearance-choice-label-${name}" aria-haspopup="dialog" aria-controls="appearance-choice-dialog" aria-expanded="false"><span data-choice-label id="appearance-choice-label-${name}"></span>${window.SolUI.icon('right')}</button></div>`;
+        };
         const toggle=(name,title)=>`<label class="appearance-row"><span>${title}</span><input type="checkbox" data-appearance-setting="${name}"></label>`;
         const range=(name,title)=>`<label class="appearance-range"><span>${title}<output id="appearance-value-${name}"></output></span><input type="range" min="${ranges[name][0]}" max="${ranges[name][1]}" data-appearance-setting="${name}" aria-label="${title}"></label>`;
         const cardStyles=[["glass","Glass"],["solid","Solid"],["outline","Outline"]];
@@ -167,14 +179,26 @@
             <details class="appearance-section"><summary>Кнопки</summary>${select("buttonStyle","Стиль кнопок",[["filled","Сплошной"],["outline","Контурный"],["neon","Неоновый"],["glass","Стеклянный"]])}${range("buttonRadius","Скругление кнопок")}${range("buttonGlow","Подсветка кнопок")}${range("response","Плавность нажатия")}</details>
             <details class="appearance-section"><summary>Свечение</summary>${toggle("glow","Включить свечение")}${range("glowIntensity","Интенсивность свечения")}</details>
             <details class="appearance-section"><summary>Анимации</summary>${toggle("animations","Включить анимации")}${select("speed","Скорость",[["slow","Медленная"],["normal","Стандартная"],["fast","Быстрая"]])}${select("transition","Смена темы",[["smooth","Smooth Blend"],["radial","Radial Wave"],["liquid","Liquid Morph"]])}<p class="appearance-hint">При уменьшении движения и на слабых устройствах эффекты упрощаются.</p></details>
-            <section class="appearance-section"><h4>Случайное оформление</h4><label class="appearance-row"><span>Режим</span><select id="appearance-mode" aria-label="Режим оформления"><option value="fixed">Постоянное</option><option value="generated">Сгенерировать и оставить</option><option value="startup">Случайное при запуске</option></select></label><button class="appearance-action" type="button" id="appearance-random">Случайное оформление</button><p class="appearance-hint">При запуске — только новая сессия Mini App. Вкладки оформление не меняют.</p></section>
+            <section class="appearance-section"><h4>Случайное оформление</h4>${select('randomMode','Режим оформления',[["fixed","Постоянное"],["generated","Сгенерировать и оставить"],["startup","Случайное при запуске"]])}<button class="appearance-action" type="button" id="appearance-random">Случайное оформление</button><p class="appearance-hint">При запуске — только новая сессия Mini App. Вкладки оформление не меняют.</p></section>
             <section class="appearance-section"><h4>Мои оформления <span id="appearance-preset-count">0 / 20</span></h4><div class="appearance-save-row"><input id="appearance-preset-name" maxlength="40" aria-label="Название оформления" placeholder="Название оформления"><button class="appearance-action" type="button" id="appearance-save">Сохранить текущее</button></div><div class="appearance-presets" id="appearance-presets"></div></section>
             <button class="appearance-action" type="button" id="appearance-reset">Восстановить стандартное оформление</button>`;
+        target.querySelectorAll('details').forEach(window.SolUI.enhanceDetails);
     }
     function init() {
         if(initialized)return;initialized=true;
         buildSettings();
         document.addEventListener("click",event=>{
+            const choice=event.target.closest('[data-appearance-choice]');
+            if(choice){
+                const name=choice.dataset.appearanceChoice,config=settingChoices.get(name);
+                window.SolUI.openChoice({trigger:choice,...config,value:choice.value,onChoose:value=>{
+                    if(name==='randomMode'){
+                        if(value==='generated'){state.randomOnLaunch=false;randomize();}
+                        else update({randomOnLaunch:value==='startup',randomMode:value},choice);
+                    }else update({[name]:value},choice);
+                }});
+                return;
+            }
             const theme=event.target.closest("[data-appearance-theme]");if(theme)update({theme:theme.dataset.appearanceTheme},theme);
             const preset=event.target.closest("[data-appearance-preset]");if(preset)applyPreset(preset.dataset.appearancePreset);
             const remove=event.target.closest("[data-appearance-delete]");if(remove)deletePreset(remove.dataset.appearanceDelete);
@@ -183,11 +207,6 @@
             if(event.target.closest("#appearance-save")){const input=document.getElementById("appearance-preset-name");const error=savePreset(input.value);if(!error)input.value="";renderStatus(error||"Оформление сохранено.");}
         });
         document.addEventListener("input",event=>{
-            if(event.target.id==="appearance-mode"){
-                if(event.target.value==="generated"){state.randomOnLaunch=false;randomize();}
-                else update({randomOnLaunch:event.target.value==="startup",randomMode:event.target.value},event.target);
-                return;
-            }
             const control=event.target.closest("[data-appearance-setting]");if(!control)return;
             const name=control.dataset.appearanceSetting;
             update({[name]:control.type==="checkbox"?control.checked:control.type==="range"?Number(control.value):control.value},control);
