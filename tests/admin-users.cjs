@@ -65,7 +65,7 @@ async function main() {
             return json(res, { detail: 'Not found' }, 404);
         }
         const filename = pathname === '/' ? 'index.html' : pathname.slice(1);
-        if (!['index.html', 'style.css', 'appearance.css', 'appearance.js', 'app.js', 'config.js'].includes(filename)) return res.writeHead(404).end();
+        if (!['index.html', 'style.css', 'appearance.css','miniapp-ui.css', 'appearance.js','miniapp-ui.js', 'app.js', 'config.js'].includes(filename)) return res.writeHead(404).end();
         res.setHeader('Content-Type', filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html');
         res.end(filename === 'config.js' ? '' : await fs.readFile(path.join(root, filename)));
     });
@@ -180,7 +180,7 @@ async function main() {
                     icons: [...document.querySelectorAll('#screen-admin svg, #btn-nav-4 svg')].map(svg => ({ box: svg.getAttribute('viewBox'), stroke: svg.getAttribute('stroke-width'), color: getComputedStyle(svg).color, vip: Boolean(svg.closest('.admin-vip-active')) })) };
             });
             assert.ok(decorations.icons.length > 100);
-            assert.ok(decorations.icons.every(svg => svg.box === '0 0 24 24' && svg.stroke === '1.7' && svg.color === (svg.vip ? 'rgb(255, 228, 157)' : 'rgb(255, 255, 255)')));
+            assert.ok(decorations.icons.every(svg => svg.box === '0 0 24 24' && svg.stroke === '1.4' && svg.color === (svg.vip ? 'rgb(255, 228, 157)' : 'rgb(255, 255, 255)')));
             assert.ok([...decorations.texts, ...decorations.placeholders].every(text => !/\p{Extended_Pictographic}/u.test(text)));
             assert.equal(await page.locator('.toast.admin-toast svg').count() > 0, true);
         });

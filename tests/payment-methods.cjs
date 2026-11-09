@@ -53,7 +53,7 @@ async function main(){
         }
         if(name===`/api/payments/orders/${starsId}`){state.active=true;return json(res,{order_id:starsId,provider:'telegram_stars',currency:'XTR',amount:350,status:'paid'})}
         const file=name==='/'?'index.html':name.slice(1);
-        if(!['index.html','app.js','appearance.js','style.css','appearance.css','config.js'].includes(file))return res.writeHead(404).end();
+        if(!['index.html','app.js','appearance.js','miniapp-ui.js','style.css','appearance.css','miniapp-ui.css','config.js'].includes(file))return res.writeHead(404).end();
         res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');
         res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
     });
