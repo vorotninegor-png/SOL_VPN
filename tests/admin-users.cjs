@@ -65,7 +65,7 @@ async function main() {
             return json(res, { detail: 'Not found' }, 404);
         }
         const filename = pathname === '/' ? 'index.html' : pathname.slice(1);
-        if (!['index.html', 'style.css', 'appearance.css','miniapp-ui.css', 'appearance.js','miniapp-ui.js', 'app.js', 'config.js'].includes(filename)) return res.writeHead(404).end();
+        if (!['index.html', 'style.css', 'appearance.css','miniapp-ui.css', 'appearance.js','miniapp-ui.js', 'app.js', 'support.css','support.js','config.js'].includes(filename)) return res.writeHead(404).end();
         res.setHeader('Content-Type', filename.endsWith('.js') ? 'text/javascript' : filename.endsWith('.css') ? 'text/css' : 'text/html');
         res.end(filename === 'config.js' ? '' : await fs.readFile(path.join(root, filename)));
     });

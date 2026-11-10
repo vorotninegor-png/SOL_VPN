@@ -1,5 +1,8 @@
 # SOL VPN: текущий frontend-выпуск
 
+Тикет-система — отдельный следующий этап: [TICKETS_RELEASE.md](TICKETS_RELEASE.md).
+Её клиентский флаг по умолчанию выключен; сначала принимается Python-бот.
+
 Актуальная инструкция — [PERSONALIZATION_RELEASE.md](PERSONALIZATION_RELEASE.md).
 Она описывает шесть тем, настройки/пресеты, чистый UI оплаты, все VIP и Helper Stars.
 Основа frontend — опубликованная main после PR №8. Ресурсы — 5008.

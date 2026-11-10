@@ -8,6 +8,7 @@
 node --check app.js
 node --check appearance.js
 node --check miniapp-ui.js
+node --check support.js
 node tests/appearance.cjs
 node tests/payment-cleanup.cjs
 node tests/payment-methods.cjs
@@ -16,6 +17,7 @@ node tests/payment-expiry.cjs
 node tests/admin-users.cjs
 node tests/info-faq.cjs
 node tests/miniapp-ui.cjs
+node tests/support.cjs
 ```
 
 Все тесты поднимают временный локальный HTTP API, подменяют Telegram SDK
@@ -32,13 +34,14 @@ node tests/miniapp-ui.cjs
 | admin-users | 19 | поиск/пагинация, VIP по ID, защищённые права, profile/message, черновики/scroll, старый API, обычный пользователь |
 | info-faq | 20 | 9 ответов, один Helper Stars, wave/Liquid Rise, reset, resize/высота, reduced motion, disclosure, touch/keyboard/Unicode |
 | miniapp-ui | 21 | SVG во всех экранах и динамических сообщениях, сохранение ⭐/₽, морфинг стрелок без rotation, отмена раскрытий, все диалоги настроек, ARIA/клавиатура/фокус, 320–1024 px, 330 px с клавиатурой, reduced motion в процессе, старый WebView, weak device, отсутствие финансовых POST |
+| support | 23 | флаг off, общий серверный номер, форма/10 файлов, отмена/сбой сети, UUID retry, история/scroll/DOM, unread/hidden, ответы бота, закрытие, сохранность админки, смена аккаунта, восстановление файлов, клавиатура/фокус, 6 тем и ширины 320–1024 px |
 
-Всего — **132 проверки**. Браузерные JavaScript errors также проверяются.
+Всего — **155 проверок**. Браузерные JavaScript errors также проверяются.
 Пять прежних suites адаптированы под новое требование очищать временный UI:
 после cancel нужна повторная явная выборка тарифа; старый expired не остаётся
 видимой карточкой, а незавершённые финансовые ID сохраняются для сверки.
 
-Файл browser-fixture.cjs — общий mock для двух новых suites, не runtime-код.
+Файл browser-fixture.cjs — общий mock для browser suites, не runtime-код.
 Он моделирует исходный server expiry и поздний paid; начисление настоящей
 подписки фронтендом не имитируется как допустимый production-механизм.
 Фактическую подписку приложение читает из backend bootstrap.
@@ -51,12 +54,18 @@ node tests/miniapp-ui.cjs
 - SOL_FAQ_SCREENSHOT_DIR — FAQ и Helper Stars 320/390 px.
 - SOL_ADMIN_SCREENSHOT_DIR — эффективный VIP/белые SVG.
 - SOL_UI_SCREENSHOT_DIR — шесть тем, SVG навигации, админка, диалоги 320/390 px и промежуточные кадры переходов.
+- SOL_SUPPORT_SCREENSHOT_DIR — снимки поддержки в сквозном локальном bridge-тесте.
 
 Тексты восьми исходных ответов FAQ сохранены; новый короткий ответ Helper Stars
 закреплён отдельно. Волна: локальная смена280 ms, шаг12 ms, max1200 ms,
 перекрытие40 ms, высота420 ms. Одна кнопка поднимается400 ms после паузы300 ms.
 Пауза предотвращает обрезание видимой строки при росте терминала.
 
-Инструкции публикации/отката и оставшиеся проверки физических Android/iOS —
+Поддержка публикуется отдельным вторым этапом после Python-бота:
+[TICKETS_RELEASE.md](../TICKETS_RELEASE.md). Сквозной тест tests/support-live.cjs
+вызывается backend runner, который создаёт локальный FastAPI/искусственную БД.
+Самостоятельно к production его не подключать.
+
+Инструкции предыдущей персонализации/отката и проверки физических Android/iOS —
 PERSONALIZATION_RELEASE.md. Backend e6bb6d… и его production-БД этим выпуском
 не изменяются. Реальные sandbox-покупки требуют отдельного согласования.

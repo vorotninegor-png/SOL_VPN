@@ -40,7 +40,7 @@ async function main() {
         } else if (name === '/config.js') {
             res.setHeader('Content-Type', 'text/javascript');
             res.end('');
-        } else if (['/', '/index.html', '/app.js', '/appearance.js', '/miniapp-ui.js', '/style.css', '/appearance.css', '/miniapp-ui.css'].includes(name)) {
+        } else if (['/', '/index.html', '/app.js', '/appearance.js', '/miniapp-ui.js', '/style.css', '/appearance.css', '/miniapp-ui.css', '/support.css', '/support.js'].includes(name)) {
             res.setHeader('Content-Type', name.endsWith('.js') ? 'text/javascript' : name.endsWith('.css') ? 'text/css' : 'text/html');
             res.end(await fs.readFile(path.join(root, name === '/' ? 'index.html' : name.slice(1))));
         } else {

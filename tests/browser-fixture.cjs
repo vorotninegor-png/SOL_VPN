@@ -16,6 +16,7 @@ async function fixture(){
     const server=http.createServer(async(req,res)=>{
         const url=new URL(req.url,'http://localhost'),name=url.pathname,uid=Number(req.headers['x-telegram-init-data'])||7001;
         if(name.startsWith('/api/'))state.requests.push({name,url:req.url,method:req.method,uid});
+        if(state.supportHandler&&(name.startsWith('/api/support')||name.startsWith('/api/admin/support'))){if(await state.supportHandler(req,res,url,uid,json))return;}
         if(name==='/api/bootstrap'){
             if(state.bootstrapDelay)await new Promise(resolve=>setTimeout(resolve,state.bootstrapDelay));
             return json(res,{user:{id:uid},is_admin:uid===8544752152,subscription:{active:state.active.has(uid),days_left:30},tariffs:tariffs(),referral:{bot_username:'SolOfflineBot'},
@@ -42,8 +43,8 @@ async function fixture(){
         }
         if(name.startsWith('/api/'))return json(res,{detail:'not found'},404);
         const file=name==='/'?'index.html':name.slice(1);
-        if(!['index.html','style.css','appearance.css','miniapp-ui.css','appearance.js','miniapp-ui.js','app.js','config.js'].includes(file))return res.writeHead(404).end();
-        res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
+        if(!['index.html','style.css','appearance.css','miniapp-ui.css','appearance.js','miniapp-ui.js','app.js','support.css','support.js','config.js'].includes(file))return res.writeHead(404).end();
+        res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');res.end(file==='config.js'?(state.supportEnabled?'window.SOL_SUPPORT_ENABLED=true;':''):await fs.readFile(path.join(root,file)));
     });
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const origin=`http://127.0.0.1:${server.address().port}`;
     const browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH||undefined});

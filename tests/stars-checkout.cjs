@@ -38,7 +38,7 @@ async function main() {
             return json(res,{order_id:'33333333-3333-4333-8333-333333333333',channel:'telegram_stars',status,amount:100,currency:'XTR'});
         }
         const file=name==='/'?'index.html':name.slice(1);
-        if (!['index.html','app.js','appearance.js','miniapp-ui.js','style.css','appearance.css','miniapp-ui.css','config.js'].includes(file)) return res.writeHead(404).end();
+        if (!['index.html','app.js','appearance.js','miniapp-ui.js','style.css','appearance.css','miniapp-ui.css','support.css','support.js','config.js'].includes(file)) return res.writeHead(404).end();
         res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');
         res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
     });
