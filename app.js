@@ -172,6 +172,7 @@ function applyBootstrap(data) {
         }
     }
 
+    window.SolSupport?.setUser(userData,isAdmin);
     if (data.subscription) {
         isSubscribedUser = Boolean(data.subscription.active);
         updateSubscriptionUI(data.subscription);
@@ -1373,6 +1374,11 @@ function paymentSheetReducedMotion() {
 }
 
 function updatePaymentCta() {
+    if (window.SolSupport?.isBlocking()) {
+        document.getElementById("payment-open-button").hidden = true;
+        tg?.MainButton?.hide?.();
+        return;
+    }
     const selected = Boolean(selectedMonths && tariffCatalog[selectedMonths]);
     const active = selected && !paymentInProgress && !yookassaCheckBusy;
     if (tg?.MainButton) {
@@ -2839,6 +2845,7 @@ function initTelegramMainButton() {
 // 🧭 НАВИГАЦИЯ
 // ==========================================
 function switchNav(index, screenId) {
+    window.SolSupport?.onNavigation(screenId);
     window.SolUI.closeChoice(true);
     if (screenId !== "settings" && !paymentSheetState.open) tg?.BackButton?.hide?.();
     if (screenId !== "info" && faqState.initialized) suspendInfoFAQ();
@@ -2986,7 +2993,7 @@ window.addEventListener("load", async () => {
     initTelegramMainButton();
     initPaymentSheet();
     window.SolAppearance?.init();
-    tg?.BackButton?.onClick?.(() => { if(window.SolUI.closeChoice())return; if (!paymentSheetState.open && document.getElementById("screen-settings")?.classList.contains("active")) switchNav(1,"profile"); });
+    tg?.BackButton?.onClick?.(() => { if(window.SolUI.closeChoice())return; if(window.SolSupport?.back())return; if (!paymentSheetState.open && document.getElementById("screen-settings")?.classList.contains("active")) switchNav(1,"profile"); });
 
     const data = await loadBootstrap(true);
     if (data) { await checkYookassaPayment(true); await checkPendingPaymentOrders(); }

@@ -50,7 +50,7 @@ async function main() {
             state.inFlight--;const body={...result(order),...state.getOverride};if(state.badIdentity)body.order_id='wrong-order';return json(res,body);
         }
         const file=name==='/'?'index.html':name.slice(1);
-        if(!['index.html','style.css','appearance.css','miniapp-ui.css','appearance.js','miniapp-ui.js','app.js','config.js'].includes(file))return res.writeHead(404).end();
+        if(!['index.html','style.css','appearance.css','miniapp-ui.css','appearance.js','miniapp-ui.js','app.js','support.css','support.js','config.js'].includes(file))return res.writeHead(404).end();
         res.setHeader('Content-Type',file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':'text/html');
         res.end(file==='config.js'?'':await fs.readFile(path.join(root,file)));
     });
